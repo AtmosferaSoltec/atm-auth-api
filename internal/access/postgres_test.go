@@ -36,6 +36,9 @@ func newWorld(t *testing.T) world {
 	w.pulso = insertID(t, pool, `INSERT INTO systems (code, name) VALUES ('pulso', 'Pulso')`)
 	w.acme = insertID(t, pool, `INSERT INTO tenants (ruc, legal_name) VALUES ('20123456789', 'Acme')`)
 	w.globex = insertID(t, pool, `INSERT INTO tenants (ruc, legal_name) VALUES ('20987654321', 'Globex')`)
+	for _, sys := range []string{w.olympus, w.pulso} {
+		platform.SeedRoles(t, pool, sys, "cajero", "admin", "dueño", "x", "otro")
+	}
 	for _, ts := range [][2]string{{w.acme, w.olympus}, {w.acme, w.pulso}, {w.globex, w.pulso}} {
 		if _, err := pool.Exec(context.Background(), `INSERT INTO tenant_systems (tenant_id, system_id) VALUES ($1, $2)`, ts[0], ts[1]); err != nil {
 			t.Fatal(err)
@@ -160,6 +163,28 @@ func TestManageUsersAndListByUser(t *testing.T) {
 	}
 	if list, _ := repo.ListByUser(ctx, w.other); len(list) != 0 {
 		t.Fatalf("got %+v", list)
+	}
+}
+
+func TestAssignNeedsARoleOfTheSystem(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	repo := NewPostgresRepository(w.pool)
+
+	if _, err := repo.Assign(ctx, Access{UserID: w.user, SystemID: w.olympus, TenantID: w.acme, Role: "inventado"}); !errors.Is(err, ErrUnknownRole) {
+		t.Fatalf("a role outside the catalog must be refused: %v", err)
+	}
+	// Roles belong to one system: a role of pulso does not exist in olympus.
+	platform.SeedRoles(t, w.pool, w.pulso, "solo-pulso")
+	if _, err := repo.Assign(ctx, Access{UserID: w.user, SystemID: w.olympus, TenantID: w.acme, Role: "solo-pulso"}); !errors.Is(err, ErrUnknownRole) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := repo.Assign(ctx, Access{UserID: w.user, SystemID: w.pulso, TenantID: w.acme, Role: "solo-pulso"}); err != nil {
+		t.Fatalf("the role exists in its own system: %v", err)
+	}
+	// The role is matched exactly: the catalog decides the spelling.
+	if _, err := repo.Assign(ctx, Access{UserID: w.other, SystemID: w.pulso, TenantID: w.acme, Role: "Solo-Pulso"}); !errors.Is(err, ErrUnknownRole) {
+		t.Fatalf("got %v", err)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/role"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/server"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/session"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/system"
@@ -38,6 +39,7 @@ type e2e struct {
 	systems *system.Service
 	tenants *tenant.Service
 	access  *access.Service
+	roles   *role.Service
 }
 
 func newE2E(t *testing.T) http.Handler { return newE2EFull(t).handler }
@@ -74,6 +76,7 @@ func newE2EFull(t *testing.T) *e2e {
 	usersSvc := user.NewService(userRepo, hasher, svc)
 	systemsSvc := system.NewService(system.NewPostgresRepository(pool))
 	tenantsSvc := tenant.NewService(tenant.NewPostgresRepository(pool))
+	rolesSvc := role.NewService(role.NewPostgresRepository(pool))
 	return &e2e{
 		handler: server.New(log, server.Deps{
 			DB: okPinger{}, Verifier: signer, JWKS: jwks,
@@ -83,12 +86,14 @@ func newE2EFull(t *testing.T) *e2e {
 			Users:   user.NewHandler(usersSvc, log),
 			Access:  access.NewHandler(accessSvc, log),
 			Secrets: credential.NewHandler(credentialSvc, log),
+			Roles:   role.NewHandler(rolesSvc, log),
 			Members: member.NewHandler(member.NewService(member.NewPostgresRepository(pool), userRepo, usersSvc, accessSvc), log, signer),
 		}),
 		users:   usersSvc,
 		systems: systemsSvc,
 		tenants: tenantsSvc,
 		access:  accessSvc,
+		roles:   rolesSvc,
 	}
 }
 
@@ -210,6 +215,11 @@ func TestUserFlowAcrossSystems(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for sys, name := range map[string]string{olympus.ID: "cajero", pulso.ID: "supervisor"} {
+		if _, err := e.roles.Create(ctx, role.CreateInput{SystemID: sys, Name: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// Same account, two systems, different roles. No access to "nova".
 	for sys, role := range map[string]string{olympus.ID: "cajero", pulso.ID: "supervisor"} {
 		if _, err := e.access.Assign(ctx, access.AssignInput{UserID: u.ID, SystemID: sys, TenantID: acme.ID, Role: role}); err != nil {
@@ -283,7 +293,7 @@ func TestSuperadminAPIAndFirstLoginFlow(t *testing.T) {
 
 	// Every admin route rejects anonymous callers.
 	for _, route := range [][2]string{
-		{"POST", "/v1/admin/systems"}, {"GET", "/v1/admin/systems"}, {"DELETE", "/v1/admin/systems/x"}, {"PUT", "/v1/admin/systems/x/session"}, {"POST", "/v1/admin/systems/x/secret"}, {"DELETE", "/v1/admin/systems/x/secret"}, {"GET", "/v1/admin/systems/x/access"}, {"DELETE", "/v1/admin/tenants/x/systems/y"}, {"POST", "/v1/admin/tenants"}, {"GET", "/v1/admin/tenants"},
+		{"POST", "/v1/admin/systems"}, {"GET", "/v1/admin/systems"}, {"DELETE", "/v1/admin/systems/x"}, {"GET", "/v1/admin/systems/x/roles"}, {"POST", "/v1/admin/systems/x/roles"}, {"PUT", "/v1/admin/systems/x/session"}, {"POST", "/v1/admin/systems/x/secret"}, {"DELETE", "/v1/admin/systems/x/secret"}, {"GET", "/v1/admin/systems/x/access"}, {"DELETE", "/v1/admin/tenants/x/systems/y"}, {"POST", "/v1/admin/tenants"}, {"GET", "/v1/admin/tenants"},
 		{"POST", "/v1/admin/users"}, {"GET", "/v1/admin/users"}, {"POST", "/v1/admin/access"},
 	} {
 		if rec := call(h, route[0], route[1], "", map[string]string{}); rec.Code != http.StatusUnauthorized {
@@ -433,11 +443,65 @@ func TestSuperadminAPIAndFirstLoginFlow(t *testing.T) {
 	}
 	decode(t, rec, &usr)
 
+	// Roles are a catalog per system, and an access can only use one of them.
+	rolesPath := "/v1/admin/systems/" + sys.ID + "/roles"
+	var dueno, spare struct {
+		ID string `json:"id"`
+	}
+	rec = call(h, "POST", rolesPath, adm, map[string]string{"name": "dueño", "description": "Dirige la empresa"})
+	if rec.Code != http.StatusCreated || !bytes.Contains(rec.Body.Bytes(), []byte(`"users":0`)) {
+		t.Fatalf("create role: %d %s", rec.Code, rec.Body)
+	}
+	decode(t, rec, &dueno)
+	if rec := call(h, "POST", rolesPath, adm, map[string]string{"name": "otro"}); rec.Code != http.StatusCreated {
+		t.Fatalf("create role: %d %s", rec.Code, rec.Body)
+	}
+	rec = call(h, "POST", rolesPath, adm, map[string]string{"name": "Sobrante"})
+	decode(t, rec, &spare)
+	for name, want := range map[string]int{"dueño": http.StatusConflict, "Sobrante": http.StatusConflict, "sobrante": http.StatusConflict, "SOBRANTE": http.StatusConflict, "   ": http.StatusBadRequest, "": http.StatusBadRequest} {
+		if rec := call(h, "POST", rolesPath, adm, map[string]string{"name": name}); rec.Code != want {
+			t.Fatalf("create role %q: got %d, want %d", name, rec.Code, want)
+		}
+	}
+	if rec := call(h, "POST", rolesPath, adm, map[string]string{"name": "x", "color": "rojo"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field: %d", rec.Code)
+	}
+	if rec := call(h, "PUT", rolesPath+"/"+dueno.ID, adm, map[string]string{"description": "Dueño del negocio"}); rec.Code != http.StatusOK ||
+		!bytes.Contains(rec.Body.Bytes(), []byte(`"name":"dueño"`)) || !bytes.Contains(rec.Body.Bytes(), []byte("Dueño del negocio")) {
+		t.Fatalf("update description: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "PUT", rolesPath+"/"+dueno.ID, adm, map[string]string{"name": "jefe"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a role cannot be renamed: %d", rec.Code)
+	}
+	if rec := call(h, "GET", rolesPath, adm, nil); rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"name":"dueño"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"name":"otro"`)) {
+		t.Fatalf("list roles: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "GET", "/v1/admin/systems/not-a-uuid/roles", adm, nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad system id: %d", rec.Code)
+	}
+	if rec := call(h, "POST", "/v1/admin/access", adm, map[string]any{
+		"user_id": usr.ID, "system_id": sys.ID, "tenant_id": ten.ID, "role": "inventado",
+	}); rec.Code != http.StatusBadRequest || !bytes.Contains(rec.Body.Bytes(), []byte("unknown_role")) {
+		t.Fatalf("a role outside the catalog must be refused: %d %s", rec.Code, rec.Body)
+	}
+
 	rec = call(h, "POST", "/v1/admin/access", adm, map[string]any{
 		"user_id": usr.ID, "system_id": sys.ID, "tenant_id": ten.ID, "role": "dueño", "manage_users": true,
 	})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("assign access: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "GET", rolesPath, adm, nil); !bytes.Contains(rec.Body.Bytes(), []byte(`"name":"dueño"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"users":1`)) {
+		t.Fatalf("the role must count its people: %s", rec.Body)
+	}
+	if rec := call(h, "DELETE", rolesPath+"/"+dueno.ID, adm, nil); rec.Code != http.StatusConflict || !bytes.Contains(rec.Body.Bytes(), []byte("role_in_use")) {
+		t.Fatalf("a role in use cannot be deleted: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "DELETE", rolesPath+"/"+spare.ID, adm, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete an unused role: %d", rec.Code)
+	}
+	if rec := call(h, "DELETE", rolesPath+"/"+spare.ID, adm, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("delete twice: %d", rec.Code)
 	}
 	if rec := call(h, "POST", "/v1/admin/access", adm, map[string]any{
 		"user_id": usr.ID, "system_id": sys.ID, "tenant_id": ten.ID, "role": "otro",
@@ -540,6 +604,13 @@ func TestTenantOwnerAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, sys := range []string{olympus.ID, pulso.ID} {
+		for _, name := range []string{"dueño", "cajero", "supervisor", "hacked", "x"} {
+			if _, err := e.roles.Create(ctx, role.CreateInput{SystemID: sys, Name: name}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	mkUser := func(dni, name string) user.User {
 		u, err := e.users.Create(ctx, user.CreateInput{DNI: dni, FullName: name, Password: dni + "-secret"})
 		if err != nil {
@@ -587,6 +658,21 @@ func TestTenantOwnerAPI(t *testing.T) {
 	}
 
 	// Owner A adds a brand new cashier: created with the DNI as password.
+	// The owner sees the roles of their own system, chooses from them, and cannot invent one.
+	if rec := call(h, "GET", "/v1/tenant/roles", tokA, nil); rec.Code != http.StatusOK ||
+		!bytes.Contains(rec.Body.Bytes(), []byte(`"name":"cajero"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"name":"supervisor"`)) {
+		t.Fatalf("owner roles: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "GET", "/v1/tenant/roles", tokPlain, nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("a member who is not an owner must not list roles: %d", rec.Code)
+	}
+	if rec := call(h, "GET", "/v1/tenant/roles", "", nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("roles without a token: %d", rec.Code)
+	}
+	if rec := call(h, "POST", "/v1/tenant/members", tokA, map[string]string{"dni": "77777777", "full_name": "Inventa Rol", "role": "inventado"}); rec.Code != http.StatusBadRequest ||
+		!bytes.Contains(rec.Body.Bytes(), []byte("unknown_role")) {
+		t.Fatalf("an owner cannot invent a role: %d %s", rec.Code, rec.Body)
+	}
 	rec := call(h, "POST", "/v1/tenant/members", tokA, map[string]string{"dni": "55555555", "full_name": "Nuevo Cajero", "role": "cajero"})
 	if rec.Code != http.StatusCreated || !bytes.Contains(rec.Body.Bytes(), []byte(`"must_change_password":true`)) ||
 		!bytes.Contains(rec.Body.Bytes(), []byte(`"manage_users":false`)) {

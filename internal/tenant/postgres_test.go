@@ -102,6 +102,7 @@ func TestPostgresDisableSystem(t *testing.T) {
 	if err := repo.EnableSystem(ctx, tn.ID, systemID); err != nil {
 		t.Fatal(err)
 	}
+	platform.SeedRoles(t, pool, systemID, "admin")
 	if _, err := pool.Exec(ctx, `INSERT INTO access (user_id, system_id, tenant_id, role) VALUES ($1, $2, $3, 'admin')`, userID, systemID, tn.ID); err != nil {
 		t.Fatal(err)
 	}

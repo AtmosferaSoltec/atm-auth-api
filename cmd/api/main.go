@@ -15,6 +15,7 @@ import (
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/role"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/server"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/session"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/system"
@@ -110,6 +111,7 @@ func run(log *slog.Logger) error {
 			Access:   access.NewHandler(accessSvc, log),
 			Members:  member.NewHandler(memberSvc, log, signer),
 			Secrets:  credential.NewHandler(credentialSvc, log),
+			Roles:    role.NewHandler(role.NewService(role.NewPostgresRepository(pool)), log),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

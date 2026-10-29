@@ -55,6 +55,8 @@ func (f *fakeRepo) Remove(_ context.Context, _, _, id string) (bool, error) {
 	f.removed = append(f.removed, id)
 	return !f.unchanged, nil
 }
+func (f *fakeRepo) Roles(context.Context, string) ([]RoleOption, error) { return nil, nil }
+
 func (f *fakeRepo) OnlyInTenant(_ context.Context, id, _ string) (bool, error) {
 	return f.onlyHere[id], nil
 }

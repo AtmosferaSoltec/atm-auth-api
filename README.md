@@ -70,7 +70,10 @@ go run ./cmd/api
 | POST, GET | `/users` | Create and list users. Body: `{dni, full_name}`. The DNI is always the initial password and must be changed at first login; a `password` field is rejected |
 | POST | `/users/{id}/reset-password` | Back to the DNI, change required, sessions ended |
 | PUT | `/users/{id}/status` | `{"status": "active" \| "disabled"}`. Disabling ends all sessions |
-| POST | `/access` | Give a user access: `{user_id, system_id, tenant_id, role, manage_users}` |
+| GET, POST | `/systems/{id}/roles` | The roles a system defines: list them (each with how many people have it) and create one: `{name, description}`. Names are unique per system without regard to case |
+| PUT | `/systems/{id}/roles/{role_id}` | Change a role's description. The name never changes: systems compare roles by it |
+| DELETE | `/systems/{id}/roles/{role_id}` | Delete a role nobody has (`409 role_in_use` otherwise) |
+| POST | `/access` | Give a user access: `{user_id, system_id, tenant_id, role, manage_users}`. `role` must be one of the system's roles (`400 unknown_role` otherwise) |
 | GET | `/users/{id}/access` | A user's accesses (with system and tenant names) |
 | GET | `/systems/{id}/access` | Who has access to a system: user, tenant and role |
 | DELETE | `/users/{id}/access/{system_id}` | Remove an access |
@@ -83,6 +86,7 @@ The scope (system and tenant) comes from the owner's current access in the datab
 
 | Method | Path | Description |
 |---|---|---|
+| GET | `/roles` | The roles of the owner's system, to choose from when adding or changing a member |
 | GET | `/members` | People of the owner's tenant in the owner's system |
 | POST | `/members` | `{dni, full_name, role}`. Creates the account (DNI as initial password) or, if the DNI already exists, only adds the access |
 | PUT | `/members/{user_id}` | `{role}`. Change a member's role |
@@ -101,7 +105,7 @@ Presenting a refresh token that was already used revokes its whole session.
 - `tenant_systems`: which systems a tenant has contracted.
 - `access`: which user enters which system, in which tenant, with which role. `UNIQUE (user_id, system_id)`: a user is in
   one tenant per system; to move them, remove the old access first. The same user can be in different tenants in different systems.
-- The role inside a system is free text (`app_role` in the token). Only `role` (`superadmin` or `user`) is used for authorization here.
+- Each system defines its own roles (a catalog per system). An access points at one of them, so a role cannot be mistyped and one in use cannot be deleted. In the token the role is still the name, as text (`app_role`): what each role allows is up to the system. Only `role` (`superadmin` or `user`) is used for authorization here.
 - Refreshing a user session re-checks the account and the access: removing access or disabling the user ends the session at the next refresh.
 
 ## Deploy

@@ -5,6 +5,7 @@ import "errors"
 var (
 	ErrInvalidID           = errors.New("invalid_id")
 	ErrInvalidRole         = errors.New("invalid_role")
+	ErrUnknownRole         = errors.New("unknown_role")
 	ErrNoAccess            = errors.New("no_access")
 	ErrUserAlreadyInSystem = errors.New("user_already_in_system")
 	ErrUserNotFound        = errors.New("user_not_found")

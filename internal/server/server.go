@@ -11,6 +11,7 @@ import (
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/httpx"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/role"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/session"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/system"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/tenant"
@@ -29,6 +30,7 @@ type Deps struct {
 	Access   *access.Handler
 	Members  *member.Handler
 	Secrets  *credential.Handler
+	Roles    *role.Handler
 }
 
 // Pinger reports whether a dependency is reachable.
@@ -48,7 +50,7 @@ func New(log *slog.Logger, d Deps) http.Handler {
 	requireAdmin := httpx.Middleware(auth.RequireRole(d.Verifier, session.RoleSuperadmin))
 	for _, h := range []interface {
 		Register(*http.ServeMux, httpx.Middleware)
-	}{d.Systems, d.Tenants, d.Users, d.Access, d.Secrets} {
+	}{d.Systems, d.Tenants, d.Users, d.Access, d.Secrets, d.Roles} {
 		h.Register(mux, requireAdmin)
 	}
 	mux.Handle("GET /v1/admin/me", requireAdmin(http.HandlerFunc(adminMe)))

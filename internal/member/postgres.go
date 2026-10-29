@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const foreignKeyViolation = "23503"
 
 type PostgresRepository struct {
 	pool *pgxpool.Pool
@@ -64,10 +68,34 @@ func (r *PostgresRepository) UpdateRole(ctx context.Context, systemID, tenantID,
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE access SET role = $4 WHERE system_id = $1 AND tenant_id = $2 AND user_id = $3 AND manage_users = false`,
 		systemID, tenantID, userID, role)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolation && pgErr.ConstraintName == "access_role_fk" {
+		return false, access.ErrUnknownRole
+	}
 	if err != nil {
 		return false, fmt.Errorf("update member role: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+func (r *PostgresRepository) Roles(ctx context.Context, systemID string) ([]RoleOption, error) {
+	rows, err := r.pool.Query(ctx, `SELECT name, description FROM system_roles WHERE system_id = $1 ORDER BY name`, systemID)
+	if err != nil {
+		return nil, fmt.Errorf("select system roles: %w", err)
+	}
+	defer rows.Close()
+	var out []RoleOption
+	for rows.Next() {
+		var o RoleOption
+		if err := rows.Scan(&o.Name, &o.Description); err != nil {
+			return nil, fmt.Errorf("scan system role: %w", err)
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate system roles: %w", err)
+	}
+	return out, nil
 }
 
 func (r *PostgresRepository) Remove(ctx context.Context, systemID, tenantID, userID string) (bool, error) {

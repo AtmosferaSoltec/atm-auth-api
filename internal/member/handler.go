@@ -22,6 +22,7 @@ func NewHandler(svc *Service, log *slog.Logger, verifier auth.Verifier) *Handler
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	mux.Handle("GET /v1/tenant/roles", h.guard(h.roles))
 	mux.Handle("GET /v1/tenant/members", h.guard(h.list))
 	mux.Handle("POST /v1/tenant/members", h.guard(h.add))
 	mux.Handle("PUT /v1/tenant/members/{user_id}", h.guard(h.updateRole))
@@ -40,6 +41,7 @@ var failures = map[error]httpx.Failure{
 	user.ErrInvalidName: {Status: http.StatusBadRequest, Message: "The full name is required for a new person."},
 
 	access.ErrInvalidRole:         {Status: http.StatusBadRequest, Message: "The role is required and can have at most 64 characters."},
+	access.ErrUnknownRole:         {Status: http.StatusBadRequest, Message: "The system has no such role. Choose one from GET /v1/tenant/roles."},
 	access.ErrUserAlreadyInSystem: {Status: http.StatusConflict, Message: "This person already belongs to an organization in this system."},
 }
 
@@ -129,4 +131,18 @@ func (h *Handler) noContent(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// roles lists the roles of the owner's system. Members can only be given one of them.
+func (h *Handler) roles(w http.ResponseWriter, r *http.Request, sc Scope) {
+	roles, err := h.svc.Roles(r.Context(), sc)
+	if err != nil {
+		httpx.Fail(w, r, h.log, err, failures)
+		return
+	}
+	out := make([]map[string]string, 0, len(roles))
+	for _, role := range roles {
+		out = append(out, map[string]string{"name": role.Name, "description": role.Description})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }

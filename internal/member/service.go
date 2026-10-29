@@ -177,3 +177,12 @@ func (s *Service) ResetPassword(ctx context.Context, sc Scope, userID string) er
 	}
 	return nil
 }
+
+// Roles returns the roles of the owner's system, to choose from when adding or changing a member.
+func (s *Service) Roles(ctx context.Context, sc Scope) ([]RoleOption, error) {
+	roles, err := s.repo.Roles(ctx, sc.SystemID)
+	if err != nil {
+		return nil, fmt.Errorf("list roles: %w", err)
+	}
+	return roles, nil
+}

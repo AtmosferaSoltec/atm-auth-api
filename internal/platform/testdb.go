@@ -31,3 +31,14 @@ func NewTestPool(t *testing.T) *pgxpool.Pool {
 	}
 	return pool
 }
+
+// SeedRoles adds role names to the catalog of a system, so tests can give them to people.
+func SeedRoles(t *testing.T, pool *pgxpool.Pool, systemID string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if _, err := pool.Exec(context.Background(),
+			`INSERT INTO system_roles (system_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING`, systemID, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

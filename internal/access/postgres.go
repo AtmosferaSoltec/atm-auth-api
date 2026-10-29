@@ -39,6 +39,8 @@ func (r *PostgresRepository) Assign(ctx context.Context, a Access) (Access, erro
 			return Access{}, ErrUserNotFound
 		case pgErr.Code == foreignKeyViolation && pgErr.ConstraintName == "access_tenant_system_fk":
 			return Access{}, ErrSystemNotEnabled
+		case pgErr.Code == foreignKeyViolation && pgErr.ConstraintName == "access_role_fk":
+			return Access{}, ErrUnknownRole
 		}
 	}
 	return Access{}, fmt.Errorf("insert access: %w", err)
