@@ -11,6 +11,7 @@ Environment variables (see `.env.example`):
 | `APP_ENV` | `development` | `development` or `production` |
 | `HTTP_ADDR` | `:8080` | Listen address |
 | `DATABASE_URL` | required | PostgreSQL connection string |
+| `CORS_ALLOWED_ORIGINS` | empty | Browser origins (comma separated) allowed to call the API directly, e.g. each system's web. Tokens travel in the `Authorization` header, so credentials/cookies are never allowed |
 
 ## Local development
 

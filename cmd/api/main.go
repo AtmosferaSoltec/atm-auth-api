@@ -113,6 +113,8 @@ func run(log *slog.Logger) error {
 			Members:  member.NewHandler(memberSvc, log, signer),
 			Secrets:  credential.NewHandler(credentialSvc, log),
 			Roles:    role.NewHandler(role.NewService(role.NewPostgresRepository(pool)), log),
+
+			CORSOrigins: cfg.CORSOrigins,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

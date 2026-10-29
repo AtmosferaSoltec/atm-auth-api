@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -40,6 +41,9 @@ type Config struct {
 	LoginMaxPerIP      int
 	LoginWindow        time.Duration
 	ClientIPHeader     string
+
+	// CORSOrigins are the browser origins allowed to call the API directly (CORS_ALLOWED_ORIGINS, comma separated).
+	CORSOrigins []string
 }
 
 // Argon2FromEnv reads ARGON2_MEMORY_KIB, ARGON2_TIME and ARGON2_THREADS, falling back to the OWASP minimums.
@@ -72,6 +76,7 @@ func Load() (Config, error) {
 		LoginMaxPerIP:      getenvInt("LOGIN_MAX_ATTEMPTS_PER_IP", 20),
 		LoginWindow:        getenvDuration("LOGIN_WINDOW", 15*time.Minute),
 		ClientIPHeader:     os.Getenv("CLIENT_IP_HEADER"),
+		CORSOrigins:        splitList(os.Getenv("CORS_ALLOWED_ORIGINS")),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("load config: DATABASE_URL is required")
@@ -111,4 +116,15 @@ func getenvDuration(key string, fallback time.Duration) time.Duration {
 		return d
 	}
 	return fallback
+}
+
+// splitList splits a comma separated list, dropping blanks and trailing slashes (origins never end with one).
+func splitList(v string) []string {
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimRight(strings.TrimSpace(item), "/"); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }

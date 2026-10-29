@@ -74,3 +74,32 @@ func Recover(log *slog.Logger, next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// CORS lets browsers on the listed origins call the API directly. Credentials are not allowed: clients send
+// the access token in the Authorization header, never cookies. With no origins, no CORS header is ever sent.
+func CORS(origins []string, next http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(origins))
+	for _, o := range origins {
+		allowed[o] = true
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" || !allowed[origin] {
+			next.ServeHTTP(w, r)
+			return
+		}
+		h := w.Header()
+		h.Add("Vary", "Origin")
+		h.Set("Access-Control-Allow-Origin", origin)
+		h.Set("Access-Control-Expose-Headers", "Retry-After, X-Request-ID")
+		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+			h.Add("Vary", "Access-Control-Request-Method")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+			h.Set("Access-Control-Max-Age", "600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

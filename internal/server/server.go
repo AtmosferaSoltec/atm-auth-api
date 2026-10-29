@@ -31,6 +31,9 @@ type Deps struct {
 	Members  *member.Handler
 	Secrets  *credential.Handler
 	Roles    *role.Handler
+
+	// CORSOrigins are the browser origins allowed to call the API directly.
+	CORSOrigins []string
 }
 
 // Pinger reports whether a dependency is reachable.
@@ -57,6 +60,7 @@ func New(log *slog.Logger, d Deps) http.Handler {
 
 	var h http.Handler = mux
 	h = httpx.Recover(log, h)
+	h = httpx.CORS(d.CORSOrigins, h)
 	h = httpx.Logger(log, h)
 	h = httpx.RequestID(h)
 	return h
