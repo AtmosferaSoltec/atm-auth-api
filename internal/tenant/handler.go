@@ -23,6 +23,7 @@ func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 	mux.Handle("GET /v1/admin/tenants", admin(http.HandlerFunc(h.list)))
 	mux.Handle("GET /v1/admin/tenants/{id}", admin(http.HandlerFunc(h.get)))
 	mux.Handle("POST /v1/admin/tenants/{id}/systems", admin(http.HandlerFunc(h.enableSystem)))
+	mux.Handle("DELETE /v1/admin/tenants/{id}/systems/{system_id}", admin(http.HandlerFunc(h.disableSystem)))
 }
 
 var failures = map[error]httpx.Failure{
@@ -33,6 +34,13 @@ var failures = map[error]httpx.Failure{
 	ErrTenantNotFound:       {Status: http.StatusNotFound, Message: "Tenant not found."},
 	ErrSystemNotFound:       {Status: http.StatusNotFound, Message: "System not found."},
 	ErrSystemAlreadyEnabled: {Status: http.StatusConflict, Message: "The system is already enabled for this tenant."},
+	ErrSystemNotEnabled:     {Status: http.StatusNotFound, Message: "The system is not enabled for this tenant."},
+}
+
+type systemRefJSON struct {
+	ID   string `json:"id"`
+	Code string `json:"code"`
+	Name string `json:"name"`
 }
 
 type tenantJSON struct {
@@ -43,12 +51,18 @@ type tenantJSON struct {
 	DisplayName string    `json:"display_name"`
 	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Systems is never null: a tenant without systems has an empty list.
+	Systems []systemRefJSON `json:"systems"`
 }
 
 func toJSON(t Tenant) tenantJSON {
+	systems := make([]systemRefJSON, 0, len(t.Systems))
+	for _, s := range t.Systems {
+		systems = append(systems, systemRefJSON{ID: s.ID, Code: s.Code, Name: s.Name})
+	}
 	return tenantJSON{
 		ID: t.ID, RUC: t.RUC, LegalName: t.LegalName, TradeName: t.TradeName,
-		DisplayName: t.DisplayName(), Status: t.Status, CreatedAt: t.CreatedAt,
+		DisplayName: t.DisplayName(), Status: t.Status, CreatedAt: t.CreatedAt, Systems: systems,
 	}
 }
 
@@ -101,6 +115,14 @@ func (h *Handler) enableSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.EnableSystem(r.Context(), r.PathValue("id"), req.SystemID); err != nil {
+		httpx.Fail(w, r, h.log, err, failures)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) disableSystem(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.DisableSystem(r.Context(), r.PathValue("id"), r.PathValue("system_id")); err != nil {
 		httpx.Fail(w, r, h.log, err, failures)
 		return
 	}

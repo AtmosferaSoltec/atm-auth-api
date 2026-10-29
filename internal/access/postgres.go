@@ -58,14 +58,14 @@ func (r *PostgresRepository) Remove(ctx context.Context, userID, systemID string
 func (r *PostgresRepository) Resolve(ctx context.Context, userID, systemCode string) (Grant, error) {
 	var g Grant
 	err := r.pool.QueryRow(ctx, `
-		SELECT a.system_id, s.code, a.tenant_id, a.role, a.manage_users
+		SELECT a.system_id, s.code, a.tenant_id, a.role, a.manage_users, s.session_mode, COALESCE(s.session_minutes, 0)
 		FROM access a
 		JOIN systems s        ON s.id = a.system_id
 		JOIN tenants t        ON t.id = a.tenant_id
 		JOIN tenant_systems ts ON ts.tenant_id = a.tenant_id AND ts.system_id = a.system_id
 		WHERE a.user_id = $1 AND s.code = $2
 		  AND s.status = 'active' AND t.status = 'active' AND ts.status = 'active'`,
-		userID, systemCode).Scan(&g.SystemID, &g.SystemCode, &g.TenantID, &g.Role, &g.ManageUsers)
+		userID, systemCode).Scan(&g.SystemID, &g.SystemCode, &g.TenantID, &g.Role, &g.ManageUsers, &g.SessionMode, &g.SessionMinutes)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Grant{}, ErrNoAccess
 	}
@@ -78,7 +78,7 @@ func (r *PostgresRepository) Resolve(ctx context.Context, userID, systemCode str
 func (r *PostgresRepository) ListByUser(ctx context.Context, userID string) ([]Detail, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT a.id, a.user_id, a.system_id, a.tenant_id, a.role, a.manage_users, a.created_at,
-		       s.code, COALESCE(NULLIF(t.trade_name, ''), t.legal_name)
+		       s.code, s.name, COALESCE(NULLIF(t.trade_name, ''), t.legal_name)
 		FROM access a
 		JOIN systems s ON s.id = a.system_id
 		JOIN tenants t ON t.id = a.tenant_id
@@ -92,7 +92,36 @@ func (r *PostgresRepository) ListByUser(ctx context.Context, userID string) ([]D
 	for rows.Next() {
 		var d Detail
 		if err := rows.Scan(&d.ID, &d.UserID, &d.SystemID, &d.TenantID, &d.Role, &d.ManageUsers, &d.CreatedAt,
-			&d.SystemCode, &d.TenantName); err != nil {
+			&d.SystemCode, &d.SystemName, &d.TenantName); err != nil {
+			return nil, fmt.Errorf("scan access: %w", err)
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate access: %w", err)
+	}
+	return out, nil
+}
+
+func (r *PostgresRepository) ListBySystem(ctx context.Context, systemID string) ([]Detail, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT a.id, a.user_id, a.system_id, a.tenant_id, a.role, a.manage_users, a.created_at,
+		       s.code, s.name, COALESCE(NULLIF(t.trade_name, ''), t.legal_name), u.dni, u.full_name
+		FROM access a
+		JOIN systems s ON s.id = a.system_id
+		JOIN tenants t ON t.id = a.tenant_id
+		JOIN users u ON u.id = a.user_id
+		WHERE a.system_id = $1
+		ORDER BY u.full_name`, systemID)
+	if err != nil {
+		return nil, fmt.Errorf("select system access: %w", err)
+	}
+	defer rows.Close()
+	var out []Detail
+	for rows.Next() {
+		var d Detail
+		if err := rows.Scan(&d.ID, &d.UserID, &d.SystemID, &d.TenantID, &d.Role, &d.ManageUsers, &d.CreatedAt,
+			&d.SystemCode, &d.SystemName, &d.TenantName, &d.UserDNI, &d.UserName); err != nil {
 			return nil, fmt.Errorf("scan access: %w", err)
 		}
 		out = append(out, d)

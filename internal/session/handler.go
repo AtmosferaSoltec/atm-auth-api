@@ -24,6 +24,7 @@ func NewHandler(svc *Service, log *slog.Logger, clientIPHeader string) *Handler 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/login", h.login)
 	mux.HandleFunc("POST /v1/admin/login", h.adminLogin)
+	mux.HandleFunc("POST /v1/token", h.clientToken)
 	mux.HandleFunc("POST /v1/password/change", h.changePassword)
 	mux.HandleFunc("POST /v1/refresh", h.refresh)
 	mux.HandleFunc("POST /v1/logout", h.logout)
@@ -55,6 +56,10 @@ type tokensResponse struct {
 	RefreshToken string `json:"refresh_token"`
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int    `json:"expires_in"`
+	// RefreshExpiresIn is how many seconds the refresh token lasts without being used.
+	RefreshExpiresIn int `json:"refresh_expires_in"`
+	// SessionMode tells clients whether they may remember the session ("persistent") or must not ("temporary").
+	SessionMode string `json:"session_mode"`
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +133,7 @@ func (h *Handler) respondTokens(w http.ResponseWriter, r *http.Request, tokens T
 		httpx.JSON(w, http.StatusOK, tokensResponse{
 			AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken,
 			TokenType: "Bearer", ExpiresIn: tokens.ExpiresIn,
+			RefreshExpiresIn: tokens.RefreshExpiresIn, SessionMode: tokens.SessionMode,
 		})
 	case errors.Is(err, ErrInvalidCredentials):
 		httpx.Error(w, http.StatusUnauthorized, "invalid_credentials", "Invalid DNI or password.")
@@ -153,4 +159,36 @@ func invalidRequest(w http.ResponseWriter) {
 func (h *Handler) internalError(w http.ResponseWriter, r *http.Request, err error) {
 	h.log.Error("session request failed", "request_id", httpx.RequestIDFromContext(r.Context()), "error", err)
 	httpx.Error(w, http.StatusInternalServerError, "internal_error", "Internal server error.")
+}
+
+type clientTokenRequest struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+// clientToken gives a system's backend a service token. The same token works on every microservice.
+func (h *Handler) clientToken(w http.ResponseWriter, r *http.Request) {
+	var req clientTokenRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil || req.ClientID == "" || req.ClientSecret == "" ||
+		len(req.ClientID) > 64 || len(req.ClientSecret) > 256 {
+		invalidRequest(w)
+		return
+	}
+	tokens, err := h.svc.ClientToken(r.Context(), req.ClientID, req.ClientSecret, httpx.ClientIP(r, h.clientIPHeader))
+
+	var tooMany *TooManyAttemptsError
+	switch {
+	case err == nil:
+		w.Header().Set("Cache-Control", "no-store")
+		httpx.JSON(w, http.StatusOK, map[string]any{
+			"access_token": tokens.AccessToken, "token_type": "Bearer", "expires_in": tokens.ExpiresIn,
+		})
+	case errors.Is(err, ErrInvalidClient):
+		httpx.Error(w, http.StatusUnauthorized, "invalid_client", "Invalid client credentials.")
+	case errors.As(err, &tooMany):
+		w.Header().Set("Retry-After", strconv.Itoa(int(tooMany.RetryAfter.Seconds())+1))
+		httpx.Error(w, http.StatusTooManyRequests, "too_many_attempts", "Too many failed attempts. Try again later.")
+	default:
+		h.internalError(w, r, err)
+	}
 }

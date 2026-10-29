@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// MinAdminPasswordLength is the shortest superadmin password accepted: the whole team shares it.
+const MinAdminPasswordLength = 12
+
 // Argon2 holds the argon2id cost parameters.
 type Argon2 struct {
 	MemoryKiB uint32
@@ -21,8 +24,10 @@ type Config struct {
 	DatabaseURL string
 	Argon2      Argon2
 
-	AdminDNI          string
-	AdminPasswordHash string
+	// AdminUser and AdminPassword are the superadmin credentials. The password is hashed once at startup;
+	// only the hash is kept in memory.
+	AdminUser     string
+	AdminPassword string
 
 	JWTPrivateKey string
 	JWTIssuer     string
@@ -52,8 +57,8 @@ func Load() (Config, error) {
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		Argon2:      Argon2FromEnv(),
 
-		AdminDNI:          os.Getenv("ADMIN_DNI"),
-		AdminPasswordHash: os.Getenv("ADMIN_PASSWORD_HASH"),
+		AdminUser:     os.Getenv("ADMIN_USER"),
+		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
 
 		JWTPrivateKey: os.Getenv("JWT_PRIVATE_KEY"),
 		JWTIssuer:     getenv("JWT_ISSUER", "atm-auth-api"),
@@ -69,11 +74,14 @@ func Load() (Config, error) {
 		return Config{}, errors.New("load config: DATABASE_URL is required")
 	}
 	for name, v := range map[string]string{
-		"ADMIN_DNI": cfg.AdminDNI, "ADMIN_PASSWORD_HASH": cfg.AdminPasswordHash, "JWT_PRIVATE_KEY": cfg.JWTPrivateKey,
+		"ADMIN_USER": cfg.AdminUser, "ADMIN_PASSWORD": cfg.AdminPassword, "JWT_PRIVATE_KEY": cfg.JWTPrivateKey,
 	} {
 		if v == "" {
 			return Config{}, fmt.Errorf("load config: %s is required", name)
 		}
+	}
+	if len(cfg.AdminPassword) < MinAdminPasswordLength {
+		return Config{}, fmt.Errorf("load config: ADMIN_PASSWORD must have at least %d characters", MinAdminPasswordLength)
 	}
 	if cfg.Env != "development" && cfg.Env != "production" {
 		return Config{}, fmt.Errorf("load config: invalid APP_ENV %q", cfg.Env)

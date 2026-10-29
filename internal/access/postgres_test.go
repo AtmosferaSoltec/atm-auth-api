@@ -155,7 +155,58 @@ func TestManageUsersAndListByUser(t *testing.T) {
 	if err != nil || len(list) != 2 || list[0].SystemCode != "olympus" || list[0].TenantName != "Acme" || !list[0].ManageUsers {
 		t.Fatalf("got %+v err %v", list, err)
 	}
+	if list[0].SystemName != "Olympus" {
+		t.Fatalf("missing system name: %+v", list[0])
+	}
 	if list, _ := repo.ListByUser(ctx, w.other); len(list) != 0 {
 		t.Fatalf("got %+v", list)
+	}
+}
+
+func TestResolveCarriesSessionPolicy(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	repo := NewPostgresRepository(w.pool)
+	if _, err := repo.Assign(ctx, Access{UserID: w.user, SystemID: w.olympus, TenantID: w.acme, Role: "cajero"}); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := repo.Resolve(ctx, w.user, "olympus"); g.SessionMode != "persistent" || g.SessionMinutes != 0 {
+		t.Fatalf("default policy: %+v", g)
+	}
+	if _, err := w.pool.Exec(ctx, `UPDATE systems SET session_mode = 'temporary', session_minutes = 15 WHERE id = $1`, w.olympus); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := repo.Resolve(ctx, w.user, "olympus"); g.SessionMode != "temporary" || g.SessionMinutes != 15 {
+		t.Fatalf("temporary policy: %+v", g)
+	}
+}
+
+func TestListBySystem(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	repo := NewPostgresRepository(w.pool)
+	for _, a := range []Access{
+		{UserID: w.other, SystemID: w.pulso, TenantID: w.globex, Role: "cajero"},
+		{UserID: w.user, SystemID: w.pulso, TenantID: w.acme, Role: "admin", ManageUsers: true},
+		{UserID: w.user, SystemID: w.olympus, TenantID: w.acme, Role: "dueño"},
+	} {
+		if _, err := repo.Assign(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	list, err := repo.ListBySystem(ctx, w.pulso)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("got %+v err %v", list, err)
+	}
+	// Ordered by user name; only the accesses of that system.
+	if list[0].UserName != "Ana" || list[0].UserDNI != "11111111" || list[0].Role != "admin" || list[0].TenantName != "Acme" || !list[0].ManageUsers {
+		t.Fatalf("got %+v", list[0])
+	}
+	if list[1].UserName != "Beto" || list[1].Role != "cajero" || list[1].TenantName != "Globex" || list[1].SystemName != "Pulso" {
+		t.Fatalf("got %+v", list[1])
+	}
+	if list, err := repo.ListBySystem(ctx, "00000000-0000-0000-0000-000000000000"); err != nil || len(list) != 0 {
+		t.Fatalf("got %+v err %v", list, err)
 	}
 }

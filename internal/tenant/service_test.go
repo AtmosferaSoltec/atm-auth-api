@@ -44,6 +44,15 @@ func (f *fakeRepo) EnableSystem(_ context.Context, tenantID, systemID string) er
 	return nil
 }
 
+func (f *fakeRepo) DisableSystem(_ context.Context, tenantID, systemID string) error {
+	key := tenantID + "|" + systemID
+	if !f.enabled[key] {
+		return ErrSystemNotEnabled
+	}
+	delete(f.enabled, key)
+	return nil
+}
+
 func TestCreate(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
@@ -93,5 +102,27 @@ func TestIDValidation(t *testing.T) {
 	}
 	if err := svc.EnableSystem(ctx, "x", "y"); !errors.Is(err, ErrInvalidID) {
 		t.Fatalf("got %v", err)
+	}
+	if err := svc.DisableSystem(ctx, "x", "y"); !errors.Is(err, ErrInvalidID) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestDisableSystem(t *testing.T) {
+	ctx := context.Background()
+	const tenantID, systemID = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
+	svc := NewService(newFakeRepo())
+
+	if err := svc.DisableSystem(ctx, tenantID, systemID); !errors.Is(err, ErrSystemNotEnabled) {
+		t.Fatalf("not enabled: got %v", err)
+	}
+	if err := svc.EnableSystem(ctx, tenantID, systemID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DisableSystem(ctx, tenantID, systemID); err != nil {
+		t.Fatalf("got %v", err)
+	}
+	if err := svc.DisableSystem(ctx, tenantID, systemID); !errors.Is(err, ErrSystemNotEnabled) {
+		t.Fatalf("second disable: got %v", err)
 	}
 }

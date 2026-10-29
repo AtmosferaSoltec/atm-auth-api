@@ -70,3 +70,15 @@ func (s *Service) ListByUser(ctx context.Context, userID string) ([]Detail, erro
 	}
 	return out, nil
 }
+
+// ListBySystem returns every access to a system, with who has it, in which tenant and with which role.
+func (s *Service) ListBySystem(ctx context.Context, systemID string) ([]Detail, error) {
+	if !platform.IsUUID(systemID) {
+		return nil, ErrInvalidID
+	}
+	out, err := s.repo.ListBySystem(ctx, systemID)
+	if err != nil {
+		return nil, fmt.Errorf("list system access: %w", err)
+	}
+	return out, nil
+}

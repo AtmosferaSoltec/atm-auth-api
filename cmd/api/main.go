@@ -12,6 +12,8 @@ import (
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/config"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/server"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/session"
@@ -19,9 +21,13 @@ import (
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/tenant"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/user"
 	"github.com/AtmosferaSoltec/atm-auth-api/migrations"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Local development convenience: variables already in the environment win over the file, and a missing file is fine.
+	_ = godotenv.Load()
+
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(log); err != nil {
 		log.Error("fatal", "error", err)
@@ -62,9 +68,14 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	adminHash, err := hasher.Hash(cfg.AdminPassword)
+	if err != nil {
+		return err
+	}
 	sessionRepo := session.NewPostgresRepository(pool)
 	userRepo := user.NewPostgresRepository(pool)
 	accessSvc := access.NewService(access.NewPostgresRepository(pool))
+	credentialSvc := credential.NewService(credential.NewPostgresRepository(pool), time.Now)
 	sessionSvc := session.NewService(session.Deps{
 		Tokens:   sessionRepo,
 		Attempts: sessionRepo,
@@ -72,8 +83,9 @@ func run(log *slog.Logger) error {
 		Access:   accessSvc,
 		Hasher:   hasher,
 		Signer:   signer,
+		Clients:  credentialSvc,
 	}, session.Config{
-		Admin:     session.AdminCredentials{DNI: cfg.AdminDNI, PasswordHash: cfg.AdminPasswordHash},
+		Admin:     session.AdminCredentials{DNI: cfg.AdminUser, PasswordHash: adminHash},
 		DummyHash: dummyHash,
 		Limits: session.Limits{
 			MaxPerSubject: cfg.LoginMaxPerSubject, MaxPerIP: cfg.LoginMaxPerIP, Window: cfg.LoginWindow,
@@ -81,6 +93,9 @@ func run(log *slog.Logger) error {
 		AccessTTL:  cfg.AccessTTL,
 		RefreshTTL: cfg.RefreshTTL,
 	}, time.Now)
+
+	userSvc := user.NewService(userRepo, hasher, sessionSvc)
+	memberSvc := member.NewService(member.NewPostgresRepository(pool), userRepo, userSvc, accessSvc)
 
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
@@ -91,8 +106,10 @@ func run(log *slog.Logger) error {
 			Session:  session.NewHandler(sessionSvc, log, cfg.ClientIPHeader),
 			Systems:  system.NewHandler(system.NewService(system.NewPostgresRepository(pool)), log),
 			Tenants:  tenant.NewHandler(tenant.NewService(tenant.NewPostgresRepository(pool)), log),
-			Users:    user.NewHandler(user.NewService(userRepo, hasher, sessionSvc), log),
+			Users:    user.NewHandler(userSvc, log),
 			Access:   access.NewHandler(accessSvc, log),
+			Members:  member.NewHandler(memberSvc, log, signer),
+			Secrets:  credential.NewHandler(credentialSvc, log),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

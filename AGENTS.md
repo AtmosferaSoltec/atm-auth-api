@@ -17,7 +17,7 @@ ATM-Auth-API is the single source of truth for identity and access across all AT
 - Access: which user can enter which system, in which tenant, with which role.
 - Login, refresh, and logout. Issues short-lived RS256 JWT access tokens.
 - Admin API (superadmin only) used by ATM-Console-Web to manage all of the above.
-- There is exactly one superadmin (the owner). It is NOT a row in `users`: its credentials come from the environment (`ADMIN_DNI`, `ADMIN_PASSWORD_HASH` as an argon2id hash, never plaintext) and it logs in through its own endpoint, `POST /v1/admin/login`. Its token carries `role: superadmin` and no system or tenant.
+- There is exactly one superadmin (the owner). It is NOT a row in `users`: its credentials come from the environment (`ADMIN_USER`, and `ADMIN_PASSWORD` of at least 12 characters, which the service hashes with argon2id when it starts; only the hash is kept in memory, and the plain value lives only in the private `.env` of each environment) and it logs in through its own endpoint, `POST /v1/admin/login`. Its token carries `role: superadmin` and no system or tenant.
 - New accounts get their DNI as the initial password and `must_change_password = true`. While it is set, login answers `403 password_change_required` and no token is issued. `POST /v1/password/change` clears it and ends all sessions.
 - `access.manage_users` marks the owner of a tenant in a system; the owner will manage only members of their own (system, tenant), taken from their token and checked again in the database. An owner can reset the password only of users who exist solely in their tenant. Only the superadmin grants `manage_users`.
 - Rule: a user belongs to at most one tenant per system (`UNIQUE (user_id, system_id)` in `access`). Across different systems the same user can belong to different tenants.
@@ -38,7 +38,6 @@ Other services never call this service on every request. They validate tokens lo
 
 ```
 cmd/api/              entry point: wiring only, no business logic
-cmd/hashpw/           prints an argon2id hash (used to set ADMIN_PASSWORD_HASH)
 migrations/           numbered .sql files
 internal/
   config/             environment configuration

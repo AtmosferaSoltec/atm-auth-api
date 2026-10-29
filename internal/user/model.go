@@ -35,6 +35,9 @@ type User struct {
 	UpdatedAt          time.Time
 }
 
-func validDNI(dni string) bool { return dniPattern.MatchString(dni) }
+// ValidDNI reports whether dni has the 8-digit form.
+func ValidDNI(dni string) bool { return dniPattern.MatchString(dni) }
+
+func validDNI(dni string) bool { return ValidDNI(dni) }
 
 func normalizeName(name string) string { return strings.Join(strings.Fields(name), " ") }

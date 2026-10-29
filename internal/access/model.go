@@ -25,7 +25,11 @@ type Access struct {
 type Detail struct {
 	Access
 	SystemCode string
+	SystemName string
 	TenantName string
+	// UserDNI and UserName are filled when listing by system.
+	UserDNI  string
+	UserName string
 }
 
 // Grant is a resolved, currently valid access: user active elsewhere, system, tenant and tenant-system all active.
@@ -35,7 +39,13 @@ type Grant struct {
 	TenantID    string
 	Role        string
 	ManageUsers bool
+	// SessionMode and SessionMinutes are the system's session policy ("persistent", or "temporary" with its minutes).
+	SessionMode    string
+	SessionMinutes int
 }
+
+// NormalizeRole trims role and reports whether it is acceptable.
+func NormalizeRole(role string) (string, bool) { return normalizeRole(role) }
 
 func normalizeRole(role string) (string, bool) {
 	role = strings.TrimSpace(role)

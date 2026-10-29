@@ -54,6 +54,11 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Tenant, er
 	if err != nil {
 		return Tenant{}, fmt.Errorf("select tenant: %w", err)
 	}
+	bySystem, err := r.systemsByTenant(ctx, id)
+	if err != nil {
+		return Tenant{}, err
+	}
+	t.Systems = bySystem[id]
 	return t, nil
 }
 
@@ -73,6 +78,41 @@ func (r *PostgresRepository) List(ctx context.Context) ([]Tenant, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate tenants: %w", err)
+	}
+	rows.Close()
+	bySystem, err := r.systemsByTenant(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Systems = bySystem[out[i].ID]
+	}
+	return out, nil
+}
+
+// systemsByTenant returns the enabled systems grouped by tenant id, ordered by system code.
+// An empty tenantID returns them for every tenant.
+func (r *PostgresRepository) systemsByTenant(ctx context.Context, tenantID string) (map[string][]SystemRef, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT ts.tenant_id, s.id, s.code, s.name
+		   FROM tenant_systems ts JOIN systems s ON s.id = ts.system_id
+		  WHERE $1 = '' OR ts.tenant_id::text = $1
+		  ORDER BY s.code`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("select tenant systems: %w", err)
+	}
+	defer rows.Close()
+	out := map[string][]SystemRef{}
+	for rows.Next() {
+		var tenant string
+		var s SystemRef
+		if err := rows.Scan(&tenant, &s.ID, &s.Code, &s.Name); err != nil {
+			return nil, fmt.Errorf("scan tenant system: %w", err)
+		}
+		out[tenant] = append(out[tenant], s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tenant systems: %w", err)
 	}
 	return out, nil
 }
@@ -94,4 +134,15 @@ func (r *PostgresRepository) EnableSystem(ctx context.Context, tenantID, systemI
 		}
 	}
 	return fmt.Errorf("insert tenant system: %w", err)
+}
+
+func (r *PostgresRepository) DisableSystem(ctx context.Context, tenantID, systemID string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM tenant_systems WHERE tenant_id = $1 AND system_id = $2`, tenantID, systemID)
+	if err != nil {
+		return fmt.Errorf("delete tenant system: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrSystemNotEnabled
+	}
+	return nil
 }

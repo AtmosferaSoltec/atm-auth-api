@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/user"
 )
@@ -151,6 +152,16 @@ func (f *fakeAccess) Resolve(_ context.Context, userID, systemCode string) (acce
 	return access.Grant{}, access.ErrNoAccess
 }
 
+// fakeClients accepts the secrets it was given, keyed by system code.
+type fakeClients struct{ secrets map[string]string }
+
+func (f fakeClients) Verify(_ context.Context, clientID, secret string) (credential.Credential, error) {
+	if want, ok := f.secrets[clientID]; ok && want == secret {
+		return credential.Credential{SystemID: "s-" + clientID, Code: clientID, Active: true}, nil
+	}
+	return credential.Credential{}, credential.ErrInvalidClient
+}
+
 type fixture struct {
 	svc      *Service
 	refresh  *fakeRefreshStore
@@ -179,6 +190,7 @@ func newFixture() *fixture {
 	f.svc = NewService(Deps{
 		Tokens: f.refresh, Attempts: f.attempts, Users: f.users, Access: f.access,
 		Hasher: fakeHasher{}, Signer: f.signer,
+		Clients: fakeClients{secrets: map[string]string{"olympus": "atm_secret"}},
 	}, Config{
 		Admin:      AdminCredentials{DNI: "74455518", PasswordHash: "right-password"},
 		DummyHash:  "dummy",
@@ -602,4 +614,144 @@ func TestRevokeUserSessions(t *testing.T) {
 	if _, err := f.svc.Refresh(ctx, first.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
 		t.Fatalf("got %v", err)
 	}
+}
+
+func TestSessionPolicy(t *testing.T) {
+	ctx := context.Background()
+	login := func(f *fixture) Tokens {
+		t.Helper()
+		tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tokens
+	}
+	setPolicy := func(f *fixture, mode string, minutes int) {
+		g := f.access.grants["u1|olympus"]
+		g.SessionMode, g.SessionMinutes = mode, minutes
+		f.access.grants["u1|olympus"] = g
+	}
+
+	t.Run("persistent keeps the global lifetime", func(t *testing.T) {
+		f := newFixture()
+		tokens := login(f)
+		if tokens.SessionMode != "persistent" || tokens.RefreshExpiresIn != 24*3600 {
+			t.Fatalf("got %+v", tokens)
+		}
+		setPolicy(f, "persistent", 0)
+		if tokens := login(f); tokens.SessionMode != "persistent" || tokens.RefreshExpiresIn != 24*3600 {
+			t.Fatalf("got %+v", tokens)
+		}
+	})
+
+	t.Run("temporary expires after its minutes without use", func(t *testing.T) {
+		f := newFixture()
+		setPolicy(f, "temporary", 15)
+		tokens := login(f)
+		if tokens.SessionMode != "temporary" || tokens.RefreshExpiresIn != 15*60 {
+			t.Fatalf("got %+v", tokens)
+		}
+		if got := f.refresh.byHash[hashToken(tokens.RefreshToken)].ExpiresAt; !got.Equal(f.now.Add(15 * time.Minute)) {
+			t.Fatalf("stored expiry %v", got)
+		}
+
+		// Used within the limit: it renews, and the new token has the full 15 minutes again.
+		*f.now = f.now.Add(10 * time.Minute)
+		renewed, err := f.svc.Refresh(ctx, tokens.RefreshToken)
+		if err != nil || renewed.RefreshExpiresIn != 15*60 || renewed.SessionMode != "temporary" {
+			t.Fatalf("got %+v err %v", renewed, err)
+		}
+
+		// Left alone past the limit: the user must sign in again.
+		*f.now = f.now.Add(16 * time.Minute)
+		if _, err := f.svc.Refresh(ctx, renewed.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+			t.Fatalf("got %v", err)
+		}
+	})
+
+	t.Run("a changed policy applies at the next refresh", func(t *testing.T) {
+		f := newFixture()
+		tokens := login(f)
+		setPolicy(f, "temporary", 5)
+		renewed, err := f.svc.Refresh(ctx, tokens.RefreshToken)
+		if err != nil || renewed.SessionMode != "temporary" || renewed.RefreshExpiresIn != 5*60 {
+			t.Fatalf("got %+v err %v", renewed, err)
+		}
+	})
+
+	t.Run("a temporary session never outlives the global limit", func(t *testing.T) {
+		f := newFixture()
+		setPolicy(f, "temporary", 1440+60)
+		if tokens := login(f); tokens.RefreshExpiresIn != 24*3600 {
+			t.Fatalf("got %+v", tokens)
+		}
+	})
+
+	t.Run("the superadmin is not affected", func(t *testing.T) {
+		f := newFixture()
+		tokens, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "1.1.1.1")
+		if err != nil || tokens.SessionMode != "persistent" || tokens.RefreshExpiresIn != 24*3600 {
+			t.Fatalf("got %+v err %v", tokens, err)
+		}
+	})
+}
+
+func TestClientToken(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a valid secret gets a service token without a refresh token", func(t *testing.T) {
+		f := newFixture()
+		tokens, err := f.svc.ClientToken(ctx, "olympus", "atm_secret", "1.1.1.1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tokens.AccessToken != "access-system:olympus" || tokens.ExpiresIn != 600 || tokens.RefreshToken != "" {
+			t.Fatalf("unexpected tokens: %+v", tokens)
+		}
+		c := f.signer.last
+		if c.Role != RoleService || c.Subject != "system:olympus" || c.System != "olympus" || c.Tenant != "" || c.AppRole != "" || c.ExpiresAt-c.IssuedAt != 600 {
+			t.Fatalf("unexpected claims: %+v", c)
+		}
+		if len(f.refresh.byHash) != 0 {
+			t.Fatal("a service token must not create a refresh token")
+		}
+	})
+
+	for name, tc := range map[string]struct{ id, secret string }{
+		"wrong secret":   {"olympus", "nope"},
+		"unknown system": {"nova", "atm_secret"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			if _, err := f.svc.ClientToken(ctx, tc.id, tc.secret, "1.1.1.1"); !errors.Is(err, ErrInvalidClient) {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+
+	t.Run("failures are throttled per system", func(t *testing.T) {
+		f := newFixture()
+		for i := 0; i < 3; i++ {
+			_, _ = f.svc.ClientToken(ctx, "olympus", "bad", "1.1.1.1")
+		}
+		_, err := f.svc.ClientToken(ctx, "olympus", "atm_secret", "2.2.2.2")
+		var tm *TooManyAttemptsError
+		if !errors.As(err, &tm) {
+			t.Fatalf("even the right secret is refused while locked, got %v", err)
+		}
+		*f.now = f.now.Add(15*time.Minute + time.Second)
+		if _, err := f.svc.ClientToken(ctx, "olympus", "atm_secret", "2.2.2.2"); err != nil {
+			t.Fatalf("expected unlock after the window, got %v", err)
+		}
+	})
+
+	t.Run("a login lockout does not lock the system, and the other way around", func(t *testing.T) {
+		f := newFixture()
+		for i := 0; i < 3; i++ {
+			_, _ = f.svc.ClientToken(ctx, "olympus", "bad", "1.1.1.1")
+		}
+		if _, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "9.9.9.9"); err != nil {
+			t.Fatalf("user login must not share the system's counter: %v", err)
+		}
+	})
 }

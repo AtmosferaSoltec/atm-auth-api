@@ -10,4 +10,7 @@ type Repository interface {
 	List(ctx context.Context) ([]Tenant, error)
 	// EnableSystem returns ErrTenantNotFound, ErrSystemNotFound or ErrSystemAlreadyEnabled.
 	EnableSystem(ctx context.Context, tenantID, systemID string) error
+	// DisableSystem removes the enablement and, by cascade, every access the tenant's users had in that system.
+	// It returns ErrSystemNotEnabled when the system was not enabled for the tenant.
+	DisableSystem(ctx context.Context, tenantID, systemID string) error
 }

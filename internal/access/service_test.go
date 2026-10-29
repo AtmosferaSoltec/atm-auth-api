@@ -15,11 +15,18 @@ const (
 
 type fakeRepo struct{ last Access }
 
-func (f *fakeRepo) Assign(_ context.Context, a Access) (Access, error)   { f.last = a; return a, nil }
-func (f *fakeRepo) ListByUser(context.Context, string) ([]Detail, error) { return nil, nil }
-func (f *fakeRepo) Remove(context.Context, string, string) error         { return nil }
+func (f *fakeRepo) Assign(_ context.Context, a Access) (Access, error)     { f.last = a; return a, nil }
+func (f *fakeRepo) ListByUser(context.Context, string) ([]Detail, error)   { return nil, nil }
+func (f *fakeRepo) ListBySystem(context.Context, string) ([]Detail, error) { return nil, nil }
+func (f *fakeRepo) Remove(context.Context, string, string) error           { return nil }
 func (f *fakeRepo) Resolve(context.Context, string, string) (Grant, error) {
 	return Grant{}, ErrNoAccess
+}
+
+func TestListBySystemValidatesID(t *testing.T) {
+	if _, err := NewService(&fakeRepo{}).ListBySystem(context.Background(), "not-a-uuid"); !errors.Is(err, ErrInvalidID) {
+		t.Fatalf("got %v", err)
+	}
 }
 
 func TestAssignValidation(t *testing.T) {

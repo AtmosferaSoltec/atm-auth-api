@@ -22,6 +22,7 @@ func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 	mux.Handle("POST /v1/admin/access", admin(http.HandlerFunc(h.assign)))
 	mux.Handle("DELETE /v1/admin/users/{id}/access/{system_id}", admin(http.HandlerFunc(h.remove)))
 	mux.Handle("GET /v1/admin/users/{id}/access", admin(http.HandlerFunc(h.listByUser)))
+	mux.Handle("GET /v1/admin/systems/{id}/access", admin(http.HandlerFunc(h.listBySystem)))
 }
 
 var failures = map[error]httpx.Failure{
@@ -38,6 +39,9 @@ type accessJSON struct {
 	UserID      string    `json:"user_id"`
 	SystemID    string    `json:"system_id"`
 	SystemCode  string    `json:"system_code,omitempty"`
+	SystemName  string    `json:"system_name,omitempty"`
+	UserDNI     string    `json:"user_dni,omitempty"`
+	UserName    string    `json:"user_name,omitempty"`
 	TenantID    string    `json:"tenant_id"`
 	TenantName  string    `json:"tenant_name,omitempty"`
 	Role        string    `json:"role"`
@@ -84,12 +88,26 @@ func (h *Handler) listByUser(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.log, err, failures)
 		return
 	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": detailsJSON(details)})
+}
+
+func (h *Handler) listBySystem(w http.ResponseWriter, r *http.Request) {
+	details, err := h.svc.ListBySystem(r.Context(), r.PathValue("id"))
+	if err != nil {
+		httpx.Fail(w, r, h.log, err, failures)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": detailsJSON(details)})
+}
+
+func detailsJSON(details []Detail) []accessJSON {
 	out := make([]accessJSON, 0, len(details))
 	for _, d := range details {
 		out = append(out, accessJSON{
-			ID: d.ID, UserID: d.UserID, SystemID: d.SystemID, SystemCode: d.SystemCode,
+			ID: d.ID, UserID: d.UserID, SystemID: d.SystemID, SystemCode: d.SystemCode, SystemName: d.SystemName,
+			UserDNI: d.UserDNI, UserName: d.UserName,
 			TenantID: d.TenantID, TenantName: d.TenantName, Role: d.Role, ManageUsers: d.ManageUsers, CreatedAt: d.CreatedAt,
 		})
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+	return out
 }

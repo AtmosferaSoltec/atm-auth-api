@@ -7,6 +7,7 @@ import (
 
 var (
 	ErrInvalidCredentials     = errors.New("invalid_credentials")
+	ErrInvalidClient          = errors.New("invalid_client")
 	ErrInvalidRefreshToken    = errors.New("invalid_refresh_token")
 	ErrPasswordChangeRequired = errors.New("password_change_required")
 )

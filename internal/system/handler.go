@@ -21,36 +21,56 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 	mux.Handle("POST /v1/admin/systems", admin(http.HandlerFunc(h.create)))
 	mux.Handle("GET /v1/admin/systems", admin(http.HandlerFunc(h.list)))
+	mux.Handle("PUT /v1/admin/systems/{id}/session", admin(http.HandlerFunc(h.updateSession)))
+	mux.Handle("DELETE /v1/admin/systems/{id}", admin(http.HandlerFunc(h.delete)))
 }
 
 var failures = map[error]httpx.Failure{
-	ErrInvalidCode: {Status: http.StatusBadRequest, Message: "The code must be lowercase letters, digits, '-' or '_', starting with a letter."},
-	ErrInvalidName: {Status: http.StatusBadRequest, Message: "The name is required."},
-	ErrCodeTaken:   {Status: http.StatusConflict, Message: "A system with that code already exists."},
+	ErrInvalidCode:           {Status: http.StatusBadRequest, Message: "The code must be lowercase letters, digits, '-' or '_', starting with a letter."},
+	ErrInvalidName:           {Status: http.StatusBadRequest, Message: "The name is required."},
+	ErrCodeTaken:             {Status: http.StatusConflict, Message: "A system with that code already exists."},
+	ErrInvalidID:             {Status: http.StatusBadRequest, Message: "Invalid id."},
+	ErrInvalidSessionMode:    {Status: http.StatusBadRequest, Message: "The session mode must be 'persistent' or 'temporary'."},
+	ErrInvalidSessionMinutes: {Status: http.StatusBadRequest, Message: "A temporary session needs between 5 and 1440 minutes."},
+	ErrSystemNotFound:        {Status: http.StatusNotFound, Message: "System not found."},
+	ErrCodeMismatch:          {Status: http.StatusBadRequest, Message: "The confirmation code does not match the system code."},
 }
 
 type systemJSON struct {
-	ID        string    `json:"id"`
-	Code      string    `json:"code"`
-	Name      string    `json:"name"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID     string `json:"id"`
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	// SessionMode is "persistent" or "temporary". SessionMinutes is 0 for a persistent one.
+	SessionMode    string `json:"session_mode"`
+	SessionMinutes int    `json:"session_minutes"`
+	// HasSecret says whether the system can ask for service tokens. The secret itself is never returned.
+	HasSecret        bool       `json:"has_secret"`
+	SecretCreatedAt  *time.Time `json:"secret_created_at,omitempty"`
+	SecretLastUsedAt *time.Time `json:"secret_last_used_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 func toJSON(s System) systemJSON {
-	return systemJSON{ID: s.ID, Code: s.Code, Name: s.Name, Status: s.Status, CreatedAt: s.CreatedAt}
+	return systemJSON{
+		ID: s.ID, Code: s.Code, Name: s.Name, Status: s.Status,
+		SessionMode: s.SessionMode, SessionMinutes: s.SessionMinutes,
+		HasSecret: s.HasSecret, SecretCreatedAt: s.SecretCreatedAt, SecretLastUsedAt: s.SecretLastUsedAt, CreatedAt: s.CreatedAt,
+	}
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Code string `json:"code"`
-		Name string `json:"name"`
+		Code           string `json:"code"`
+		Name           string `json:"name"`
+		SessionMode    string `json:"session_mode"`
+		SessionMinutes int    `json:"session_minutes"`
 	}
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
 		return
 	}
-	s, err := h.svc.Create(r.Context(), CreateInput{Code: req.Code, Name: req.Name})
+	s, err := h.svc.Create(r.Context(), CreateInput{Code: req.Code, Name: req.Name, SessionMode: req.SessionMode, SessionMinutes: req.SessionMinutes})
 	if err != nil {
 		httpx.Fail(w, r, h.log, err, failures)
 		return
@@ -69,4 +89,30 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toJSON(s))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// delete removes the system named by the path. The system's code must be sent as the `confirm` query parameter.
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.Delete(r.Context(), r.PathValue("id"), r.URL.Query().Get("confirm")); err != nil {
+		httpx.Fail(w, r, h.log, err, failures)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) updateSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode    string `json:"mode"`
+		Minutes int    `json:"minutes"`
+	}
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
+		return
+	}
+	s, err := h.svc.UpdateSession(r.Context(), r.PathValue("id"), req.Mode, req.Minutes)
+	if err != nil {
+		httpx.Fail(w, r, h.log, err, failures)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, toJSON(s))
 }

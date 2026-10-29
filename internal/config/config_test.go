@@ -8,8 +8,8 @@ import (
 func setRequired(t *testing.T) {
 	t.Helper()
 	t.Setenv("DATABASE_URL", "postgres://x")
-	t.Setenv("ADMIN_DNI", "74455518")
-	t.Setenv("ADMIN_PASSWORD_HASH", "$argon2id$x")
+	t.Setenv("ADMIN_USER", "admin")
+	t.Setenv("ADMIN_PASSWORD", "a-long-admin-password")
 	t.Setenv("JWT_PRIVATE_KEY", "key")
 }
 
@@ -42,7 +42,7 @@ func TestLoad(t *testing.T) {
 			t.Fatal("expected error")
 		}
 	})
-	for _, name := range []string{"ADMIN_DNI", "ADMIN_PASSWORD_HASH", "JWT_PRIVATE_KEY"} {
+	for _, name := range []string{"ADMIN_USER", "ADMIN_PASSWORD", "JWT_PRIVATE_KEY"} {
 		t.Run("missing "+name, func(t *testing.T) {
 			setRequired(t)
 			t.Setenv(name, "")
@@ -51,6 +51,17 @@ func TestLoad(t *testing.T) {
 			}
 		})
 	}
+	t.Run("short admin password", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("ADMIN_PASSWORD", "short-11-ch")
+		if _, err := Load(); err == nil {
+			t.Fatal("a password under 12 characters must be refused")
+		}
+		t.Setenv("ADMIN_PASSWORD", "exactly-12-c")
+		if _, err := Load(); err != nil {
+			t.Fatalf("12 characters must be accepted: %v", err)
+		}
+	})
 	t.Run("custom durations", func(t *testing.T) {
 		setRequired(t)
 		t.Setenv("ACCESS_TOKEN_TTL", "5m")

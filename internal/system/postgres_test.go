@@ -37,3 +37,90 @@ func TestPostgresRepository(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestPostgresDeleteCascades(t *testing.T) {
+	ctx := context.Background()
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
+
+	sys, err := repo.Create(ctx, System{Code: "olympus", Name: "Olympus", Status: StatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tenantID string
+	if err := pool.QueryRow(ctx, `INSERT INTO tenants (ruc, legal_name) VALUES ('20123456789', 'Gym SAC') RETURNING id`).Scan(&tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant_systems (tenant_id, system_id) VALUES ($1, $2)`, tenantID, sys.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetByID(ctx, sys.ID)
+	if err != nil || got.Code != "olympus" {
+		t.Fatalf("got %+v err %v", got, err)
+	}
+	if err := repo.Delete(ctx, sys.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.GetByID(ctx, sys.ID); !errors.Is(err, ErrSystemNotFound) {
+		t.Fatalf("got %v", err)
+	}
+	if err := repo.Delete(ctx, sys.ID); !errors.Is(err, ErrSystemNotFound) {
+		t.Fatalf("second delete: got %v", err)
+	}
+
+	var left int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM tenant_systems WHERE system_id = $1`, sys.ID).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("tenant_systems left: %d err %v", left, err)
+	}
+}
+
+func TestPostgresSessionPolicy(t *testing.T) {
+	ctx := context.Background()
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
+
+	created, err := repo.Create(ctx, System{Code: "pulso", Name: "Pulso", Status: StatusActive, SessionMode: SessionTemporary, SessionMinutes: 20})
+	if err != nil || created.SessionMode != SessionTemporary || created.SessionMinutes != 20 {
+		t.Fatalf("got %+v err %v", created, err)
+	}
+	updated, err := repo.UpdateSession(ctx, created.ID, SessionPersistent, 0)
+	if err != nil || updated.SessionMode != SessionPersistent || updated.SessionMinutes != 0 {
+		t.Fatalf("got %+v err %v", updated, err)
+	}
+	if got, _ := repo.GetByID(ctx, created.ID); got.SessionMode != SessionPersistent || got.SessionMinutes != 0 {
+		t.Fatalf("not persisted: %+v", got)
+	}
+	if _, err := repo.UpdateSession(ctx, "00000000-0000-0000-0000-000000000000", SessionPersistent, 0); !errors.Is(err, ErrSystemNotFound) {
+		t.Fatalf("got %v", err)
+	}
+	// The database refuses inconsistent policies even if the service is bypassed.
+	for _, q := range []string{
+		`UPDATE systems SET session_mode = 'temporary', session_minutes = NULL`,
+		`UPDATE systems SET session_mode = 'temporary', session_minutes = 2`,
+		`UPDATE systems SET session_mode = 'persistent', session_minutes = 30`,
+		`UPDATE systems SET session_mode = 'forever'`,
+	} {
+		if _, err := pool.Exec(ctx, q); err == nil {
+			t.Fatalf("database accepted %q", q)
+		}
+	}
+}
+
+func TestPostgresReportsSecret(t *testing.T) {
+	ctx := context.Background()
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
+
+	created, err := repo.Create(ctx, System{Code: "olympus", Name: "Olympus", Status: StatusActive})
+	if err != nil || created.HasSecret || created.SecretCreatedAt != nil {
+		t.Fatalf("got %+v err %v", created, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE systems SET secret_hash = 'h', secret_created_at = now() WHERE id = $1`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetByID(ctx, created.ID)
+	if err != nil || !got.HasSecret || got.SecretCreatedAt == nil || got.SecretLastUsedAt != nil {
+		t.Fatalf("got %+v err %v", got, err)
+	}
+}

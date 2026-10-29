@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/user"
 )
@@ -36,6 +37,12 @@ type AccessResolver interface {
 	Resolve(ctx context.Context, userID, systemCode string) (access.Grant, error)
 }
 
+// ClientVerifier checks the secret a system's backend presents.
+type ClientVerifier interface {
+	// Verify returns credential.ErrInvalidClient unless the code and secret match an active system.
+	Verify(ctx context.Context, clientID, secret string) (credential.Credential, error)
+}
+
 type Service struct {
 	deps       Deps
 	admin      AdminCredentials
@@ -53,6 +60,7 @@ type Deps struct {
 	Access   AccessResolver
 	Hasher   PasswordHasher
 	Signer   TokenSigner
+	Clients  ClientVerifier
 }
 
 type Config struct {
@@ -328,8 +336,18 @@ func (s *Service) issue(ctx context.Context, tmpl RefreshToken, grant *access.Gr
 		return Tokens{}, err
 	}
 	now := s.now()
+	refreshTTL, mode := s.refreshTTL, "persistent"
+	if grant != nil {
+		if grant.SessionMode != "" {
+			mode = grant.SessionMode
+		}
+		// A temporary session lasts its own, shorter inactivity limit, never longer than the global one.
+		if limit := time.Duration(grant.SessionMinutes) * time.Minute; limit > 0 && limit < refreshTTL {
+			refreshTTL = limit
+		}
+	}
 	tmpl.TokenHash = hashToken(raw)
-	tmpl.ExpiresAt = now.Add(s.refreshTTL)
+	tmpl.ExpiresAt = now.Add(refreshTTL)
 	if _, err := s.deps.Tokens.Create(ctx, tmpl); err != nil {
 		return Tokens{}, fmt.Errorf("store refresh token: %w", err)
 	}
@@ -353,7 +371,10 @@ func (s *Service) issue(ctx context.Context, tmpl RefreshToken, grant *access.Gr
 	if err != nil {
 		return Tokens{}, err
 	}
-	return Tokens{AccessToken: access, RefreshToken: raw, ExpiresIn: int(s.accessTTL.Seconds())}, nil
+	return Tokens{
+		AccessToken: access, RefreshToken: raw, ExpiresIn: int(s.accessTTL.Seconds()),
+		RefreshExpiresIn: int(refreshTTL.Seconds()), SessionMode: mode,
+	}, nil
 }
 
 func newRefreshToken() (string, error) {
@@ -368,4 +389,39 @@ func newRefreshToken() (string, error) {
 func hashToken(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+// ClientToken exchanges a system's secret for a short-lived service token. It issues no refresh token:
+// the backend asks again when the token expires. Failures are throttled per system and per IP, like logins.
+func (s *Service) ClientToken(ctx context.Context, clientID, secret, ip string) (Tokens, error) {
+	subjectKey, ipKey := "client:"+clientID, "ip:"+ip
+	if err := s.checkLimits(ctx, subjectKey, ipKey); err != nil {
+		return Tokens{}, err
+	}
+	c, err := s.deps.Clients.Verify(ctx, clientID, secret)
+	if errors.Is(err, credential.ErrInvalidClient) {
+		if err := s.recordFailure(ctx, subjectKey, ipKey); err != nil {
+			return Tokens{}, err
+		}
+		return Tokens{}, ErrInvalidClient
+	}
+	if err != nil {
+		return Tokens{}, fmt.Errorf("client token: %w", err)
+	}
+	if err := s.deps.Attempts.Clear(ctx, subjectKey); err != nil {
+		return Tokens{}, fmt.Errorf("client token: clear attempts: %w", err)
+	}
+
+	now := s.now()
+	access, err := s.deps.Signer.Sign(platform.Claims{
+		Subject:   "system:" + c.Code,
+		Role:      RoleService,
+		System:    c.Code,
+		IssuedAt:  now.Unix(),
+		ExpiresAt: now.Add(s.accessTTL).Unix(),
+	})
+	if err != nil {
+		return Tokens{}, fmt.Errorf("client token: %w", err)
+	}
+	return Tokens{AccessToken: access, ExpiresIn: int(s.accessTTL.Seconds())}, nil
 }

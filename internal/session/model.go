@@ -5,6 +5,8 @@ import "time"
 const (
 	RoleSuperadmin = "superadmin"
 	RoleUser       = "user"
+	// RoleService is the role of a system's backend. Its tokens open no admin or tenant route.
+	RoleService = "service"
 
 	// AdminSubject is the JWT subject of the superadmin, which has no row in users.
 	AdminSubject = "admin"
@@ -29,6 +31,10 @@ type Tokens struct {
 	AccessToken  string
 	RefreshToken string
 	ExpiresIn    int
+	// RefreshExpiresIn is how many seconds the refresh token stays valid without being used.
+	RefreshExpiresIn int
+	// SessionMode is "persistent" or "temporary": whether clients may remember the session.
+	SessionMode string
 }
 
 // Limits configures login throttling.

@@ -67,3 +67,14 @@ func (s *Service) EnableSystem(ctx context.Context, tenantID, systemID string) e
 	}
 	return nil
 }
+
+// DisableSystem removes the system from the tenant. Every access its users had in that system is removed with it.
+func (s *Service) DisableSystem(ctx context.Context, tenantID, systemID string) error {
+	if !platform.IsUUID(tenantID) || !platform.IsUUID(systemID) {
+		return ErrInvalidID
+	}
+	if err := s.repo.DisableSystem(ctx, tenantID, systemID); err != nil {
+		return fmt.Errorf("disable system: %w", err)
+	}
+	return nil
+}

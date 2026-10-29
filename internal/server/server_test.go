@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/session"
 )
@@ -19,7 +20,7 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 
 func newHandler(db Pinger) http.Handler {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(log, Deps{DB: db, Verifier: noVerifier{}, Session: session.NewHandler(nil, log, "")})
+	return New(log, Deps{DB: db, Verifier: noVerifier{}, Session: session.NewHandler(nil, log, ""), Members: member.NewHandler(nil, log, noVerifier{})})
 }
 
 type noVerifier struct{}

@@ -10,4 +10,5 @@ var (
 	ErrTenantNotFound       = errors.New("tenant_not_found")
 	ErrSystemNotFound       = errors.New("system_not_found")
 	ErrSystemAlreadyEnabled = errors.New("system_already_enabled")
+	ErrSystemNotEnabled     = errors.New("system_not_enabled")
 )
