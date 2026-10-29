@@ -4,11 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/user"
 )
+
+// ReservedRole is the role of the platform's own team. Only the superadmin API grants it: an owner can neither
+// give it nor see it, or any owner could make a worker the superadmin of every company.
+const ReservedRole = "superadmin"
+
+func isReserved(role string) bool { return strings.EqualFold(strings.TrimSpace(role), ReservedRole) }
 
 type UserFinder interface {
 	GetByDNI(ctx context.Context, dni string) (user.User, error)
@@ -86,6 +93,9 @@ func (s *Service) Add(ctx context.Context, sc Scope, in AddInput) (Member, error
 	if !ok {
 		return Member{}, access.ErrInvalidRole
 	}
+	if isReserved(role) {
+		return Member{}, access.ErrUnknownRole
+	}
 
 	u, err := s.finder.GetByDNI(ctx, in.DNI)
 	if errors.Is(err, user.ErrUserNotFound) {
@@ -120,7 +130,7 @@ func (s *Service) editable(ctx context.Context, sc Scope, userID string) (Member
 	if err != nil {
 		return Member{}, err
 	}
-	if m.ManageUsers {
+	if m.ManageUsers || isReserved(m.Role) {
 		return Member{}, ErrProtectedMember
 	}
 	return m, nil
@@ -130,6 +140,9 @@ func (s *Service) UpdateRole(ctx context.Context, sc Scope, userID, role string)
 	role, ok := access.NormalizeRole(role)
 	if !ok {
 		return access.ErrInvalidRole
+	}
+	if isReserved(role) {
+		return access.ErrUnknownRole
 	}
 	if _, err := s.editable(ctx, sc, userID); err != nil {
 		return err
@@ -184,5 +197,11 @@ func (s *Service) Roles(ctx context.Context, sc Scope) ([]RoleOption, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list roles: %w", err)
 	}
-	return roles, nil
+	assignable := make([]RoleOption, 0, len(roles))
+	for _, r := range roles {
+		if !isReserved(r.Name) {
+			assignable = append(assignable, r)
+		}
+	}
+	return assignable, nil
 }

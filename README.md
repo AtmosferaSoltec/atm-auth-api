@@ -81,6 +81,14 @@ go run ./cmd/api
 
 `manage_users` marks the owner of a tenant in a system, who will be able to manage the members of their own tenant.
 
+### System service API (`/v1/service`, requires the service token of a system)
+
+For a system's own backend, with the token from `POST /v1/token`. The system is the one the token was issued to; nothing in the request can change it.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/tenants` | The customers of the system: active tenants that have it enabled. Each is `{id, ruc, legal_name, trade_name, display_name}`; the list never says what other systems a customer uses |
+
 ### Tenant owner API (`/v1/tenant/members`, requires a user token with `manage_users`)
 
 The scope (system and tenant) comes from the owner's current access in the database, never from the request.
@@ -95,6 +103,7 @@ The scope (system and tenant) comes from the owner's current access in the datab
 | POST | `/members/{user_id}/reset-password` | Only for people who exist solely in this tenant |
 
 Owners (`manage_users`) cannot be changed, removed or reset through this API, not even by themselves.
+The role `superadmin` is reserved for the platform's own team: it is hidden from `GET /roles`, owners cannot give it (`400 unknown_role`), and people who have it cannot be changed or removed through this API. Only the superadmin API grants it.
 `manage_users` is granted only by the superadmin.
 
 Login is throttled per DNI and per IP (`LOGIN_*` variables) and answers `429 too_many_attempts` with `Retry-After`.

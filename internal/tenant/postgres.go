@@ -90,6 +90,31 @@ func (r *PostgresRepository) List(ctx context.Context) ([]Tenant, error) {
 	return out, nil
 }
 
+func (r *PostgresRepository) ListForSystem(ctx context.Context, systemCode string) ([]Tenant, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+columns+` FROM tenants
+		  WHERE status = 'active' AND id IN (
+		        SELECT ts.tenant_id FROM tenant_systems ts JOIN systems s ON s.id = ts.system_id
+		         WHERE s.code = $1 AND s.status = 'active' AND ts.status = 'active')
+		  ORDER BY legal_name`, systemCode)
+	if err != nil {
+		return nil, fmt.Errorf("select tenants of system: %w", err)
+	}
+	defer rows.Close()
+	var out []Tenant
+	for rows.Next() {
+		t, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan tenant: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tenants of system: %w", err)
+	}
+	return out, nil
+}
+
 // systemsByTenant returns the enabled systems grouped by tenant id, ordered by system code.
 // An empty tenantID returns them for every tenant.
 func (r *PostgresRepository) systemsByTenant(ctx context.Context, tenantID string) (map[string][]SystemRef, error) {

@@ -57,6 +57,18 @@ func (s *Service) List(ctx context.Context) ([]Tenant, error) {
 	return ts, nil
 }
 
+// ListForSystem returns the tenants a system serves: the ones that have it enabled and are active.
+func (s *Service) ListForSystem(ctx context.Context, systemCode string) ([]Tenant, error) {
+	if systemCode == "" {
+		return nil, ErrSystemNotFound
+	}
+	ts, err := s.repo.ListForSystem(ctx, systemCode)
+	if err != nil {
+		return nil, fmt.Errorf("list tenants of system: %w", err)
+	}
+	return ts, nil
+}
+
 // EnableSystem records that the tenant has contracted the system.
 func (s *Service) EnableSystem(ctx context.Context, tenantID, systemID string) error {
 	if !platform.IsUUID(tenantID) || !platform.IsUUID(systemID) {

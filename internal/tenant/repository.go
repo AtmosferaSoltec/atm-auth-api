@@ -8,6 +8,9 @@ type Repository interface {
 	// GetByID returns ErrTenantNotFound when there is no match.
 	GetByID(ctx context.Context, id string) (Tenant, error)
 	List(ctx context.Context) ([]Tenant, error)
+	// ListForSystem returns the active tenants that have the system enabled, ordered by legal name. A disabled
+	// system, tenant or enablement leaves a tenant out.
+	ListForSystem(ctx context.Context, systemCode string) ([]Tenant, error)
 	// EnableSystem returns ErrTenantNotFound, ErrSystemNotFound or ErrSystemAlreadyEnabled.
 	EnableSystem(ctx context.Context, tenantID, systemID string) error
 	// DisableSystem removes the enablement and, by cascade, every access the tenant's users had in that system.

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/auth"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/httpx"
 )
 
@@ -24,6 +25,12 @@ func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 	mux.Handle("GET /v1/admin/tenants/{id}", admin(http.HandlerFunc(h.get)))
 	mux.Handle("POST /v1/admin/tenants/{id}/systems", admin(http.HandlerFunc(h.enableSystem)))
 	mux.Handle("DELETE /v1/admin/tenants/{id}/systems/{system_id}", admin(http.HandlerFunc(h.disableSystem)))
+}
+
+// RegisterService mounts the routes a system's backend calls with its service token. The system is the one the
+// token was issued to: it comes from the token, never from the request.
+func (h *Handler) RegisterService(mux *http.ServeMux, service httpx.Middleware) {
+	mux.Handle("GET /v1/service/tenants", service(http.HandlerFunc(h.listForSystem)))
 }
 
 var failures = map[error]httpx.Failure{
@@ -127,4 +134,31 @@ func (h *Handler) disableSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// serviceTenantJSON is what a system needs to know about its customers: who they are, not what else they use.
+type serviceTenantJSON struct {
+	ID          string `json:"id"`
+	RUC         string `json:"ruc"`
+	LegalName   string `json:"legal_name"`
+	TradeName   string `json:"trade_name"`
+	DisplayName string `json:"display_name"`
+}
+
+func (h *Handler) listForSystem(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims.System == "" {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "Insufficient permissions.")
+		return
+	}
+	ts, err := h.svc.ListForSystem(r.Context(), claims.System)
+	if err != nil {
+		httpx.Fail(w, r, h.log, err, failures)
+		return
+	}
+	out := make([]serviceTenantJSON, 0, len(ts))
+	for _, t := range ts {
+		out = append(out, serviceTenantJSON{ID: t.ID, RUC: t.RUC, LegalName: t.LegalName, TradeName: t.TradeName, DisplayName: t.DisplayName()})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }

@@ -35,6 +35,8 @@ func (f *fakeRepo) GetByID(_ context.Context, id string) (Tenant, error) {
 
 func (f *fakeRepo) List(context.Context) ([]Tenant, error) { return nil, nil }
 
+func (f *fakeRepo) ListForSystem(context.Context, string) ([]Tenant, error) { return nil, nil }
+
 func (f *fakeRepo) EnableSystem(_ context.Context, tenantID, systemID string) error {
 	key := tenantID + "|" + systemID
 	if f.enabled[key] {
@@ -124,5 +126,12 @@ func TestDisableSystem(t *testing.T) {
 	}
 	if err := svc.DisableSystem(ctx, tenantID, systemID); !errors.Is(err, ErrSystemNotEnabled) {
 		t.Fatalf("second disable: got %v", err)
+	}
+}
+
+func TestListForSystemNeedsACode(t *testing.T) {
+	svc := NewService(newFakeRepo())
+	if _, err := svc.ListForSystem(context.Background(), ""); !errors.Is(err, ErrSystemNotFound) {
+		t.Fatalf("got %v", err)
 	}
 }

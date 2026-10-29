@@ -130,3 +130,63 @@ func TestRUCConstraint(t *testing.T) {
 		t.Fatal("database must reject a malformed RUC")
 	}
 }
+
+func TestListForSystem(t *testing.T) {
+	ctx := context.Background()
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
+
+	tenants := map[string]string{}
+	for _, in := range []Tenant{
+		{RUC: "20000000001", LegalName: "Beta SAC", TradeName: "Beta", Status: StatusActive},
+		{RUC: "20000000002", LegalName: "Alfa SAC", Status: StatusActive},
+		{RUC: "20000000003", LegalName: "Gamma SAC", Status: StatusActive},
+		{RUC: "20000000004", LegalName: "Delta SAC", Status: StatusActive},
+	} {
+		created, err := repo.Create(ctx, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tenants[in.RUC] = created.ID
+	}
+	var lavendimia, pulso string
+	for code, dst := range map[string]*string{"lavendimia": &lavendimia, "pulso": &pulso} {
+		if err := pool.QueryRow(ctx, `INSERT INTO systems (code, name) VALUES ($1, $1) RETURNING id`, code).Scan(dst); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Beta, Alfa and Gamma have lavendimia; Gamma is switched off for it; Delta only has pulso.
+	for _, ruc := range []string{"20000000001", "20000000002", "20000000003"} {
+		if err := repo.EnableSystem(ctx, tenants[ruc], lavendimia); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.EnableSystem(ctx, tenants["20000000004"], pulso); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tenant_systems SET status = 'disabled' WHERE tenant_id = $1`, tenants["20000000003"]); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.ListForSystem(ctx, "lavendimia")
+	if err != nil || len(got) != 2 || got[0].LegalName != "Alfa SAC" || got[1].LegalName != "Beta SAC" || got[1].TradeName != "Beta" {
+		t.Fatalf("only the active tenants with the system, by legal name: got %+v err %v", got, err)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE tenants SET status = 'disabled' WHERE id = $1`, tenants["20000000002"]); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.ListForSystem(ctx, "lavendimia"); len(got) != 1 {
+		t.Fatalf("a disabled tenant must leave the list: %+v", got)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE systems SET status = 'disabled' WHERE id = $1`, lavendimia); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.ListForSystem(ctx, "lavendimia"); len(got) != 0 {
+		t.Fatalf("a disabled system serves nobody: %+v", got)
+	}
+	if got, err := repo.ListForSystem(ctx, "no-existe"); err != nil || len(got) != 0 {
+		t.Fatalf("unknown system: got %+v err %v", got, err)
+	}
+}

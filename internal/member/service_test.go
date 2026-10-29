@@ -26,6 +26,7 @@ type fakeRepo struct {
 	updated   map[string]string
 	removed   []string
 	unchanged bool // make UpdateRole/Remove report "no row changed"
+	roles     []RoleOption
 }
 
 func newFakeRepo() *fakeRepo {
@@ -55,7 +56,7 @@ func (f *fakeRepo) Remove(_ context.Context, _, _, id string) (bool, error) {
 	f.removed = append(f.removed, id)
 	return !f.unchanged, nil
 }
-func (f *fakeRepo) Roles(context.Context, string) ([]RoleOption, error) { return nil, nil }
+func (f *fakeRepo) Roles(context.Context, string) ([]RoleOption, error) { return f.roles, nil }
 
 func (f *fakeRepo) OnlyInTenant(_ context.Context, id, _ string) (bool, error) {
 	return f.onlyHere[id], nil
@@ -323,6 +324,48 @@ func TestResetPassword(t *testing.T) {
 		}
 		if len(f.users.reset) != 0 {
 			t.Fatal("password was reset anyway")
+		}
+	})
+}
+
+func TestReservedRole(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("an owner cannot give the superadmin role, however it is spelled", func(t *testing.T) {
+		for _, role := range []string{"superadmin", "SuperAdmin", " SUPERADMIN "} {
+			f := newFixture()
+			if _, err := f.svc.Add(ctx, scope, AddInput{DNI: "77777777", FullName: "Nueva", Role: role}); !errors.Is(err, access.ErrUnknownRole) {
+				t.Fatalf("add %q: got %v", role, err)
+			}
+			if len(f.users.created) != 0 || len(f.access.assigned) != 0 {
+				t.Fatalf("nothing may be created for %q: %+v %+v", role, f.users.created, f.access.assigned)
+			}
+			if err := f.svc.UpdateRole(ctx, scope, cashier, role); !errors.Is(err, access.ErrUnknownRole) {
+				t.Fatalf("update %q: got %v", role, err)
+			}
+			if len(f.repo.updated) != 0 {
+				t.Fatalf("the role must not change for %q: %+v", role, f.repo.updated)
+			}
+		}
+	})
+
+	t.Run("the role is not offered to owners", func(t *testing.T) {
+		f := newFixture()
+		f.repo.roles = []RoleOption{{Name: "admin"}, {Name: "superadmin"}, {Name: "cashier"}}
+		got, err := f.svc.Roles(ctx, scope)
+		if err != nil || len(got) != 2 || got[0].Name != "admin" || got[1].Name != "cashier" {
+			t.Fatalf("got %+v err %v", got, err)
+		}
+	})
+
+	t.Run("an owner cannot change or remove someone who already has it", func(t *testing.T) {
+		f := newFixture()
+		f.repo.members[other] = Member{UserID: other, Role: "superadmin"}
+		if err := f.svc.UpdateRole(ctx, scope, other, "cajero"); !errors.Is(err, ErrProtectedMember) {
+			t.Fatalf("got %v", err)
+		}
+		if err := f.svc.Remove(ctx, scope, other); !errors.Is(err, ErrProtectedMember) {
+			t.Fatalf("got %v", err)
 		}
 	})
 }

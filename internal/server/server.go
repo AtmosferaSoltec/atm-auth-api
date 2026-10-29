@@ -56,6 +56,8 @@ func New(log *slog.Logger, d Deps) http.Handler {
 	}{d.Systems, d.Tenants, d.Users, d.Access, d.Secrets, d.Roles} {
 		h.Register(mux, requireAdmin)
 	}
+	// Routes for a system's own backend, with the service token from POST /v1/token.
+	d.Tenants.RegisterService(mux, httpx.Middleware(auth.RequireRole(d.Verifier, session.RoleService)))
 	mux.Handle("GET /v1/admin/me", requireAdmin(http.HandlerFunc(adminMe)))
 
 	var h http.Handler = mux
