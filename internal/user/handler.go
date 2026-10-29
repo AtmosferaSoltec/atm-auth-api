@@ -56,13 +56,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DNI      string `json:"dni"`
 		FullName string `json:"full_name"`
-		Password string `json:"password"`
 	}
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
 		return
 	}
-	u, err := h.svc.Create(r.Context(), CreateInput{DNI: req.DNI, FullName: req.FullName, Password: req.Password})
+	u, err := h.svc.Create(r.Context(), CreateInput{DNI: req.DNI, FullName: req.FullName})
 	if err != nil {
 		httpx.Fail(w, r, h.log, err, failures)
 		return

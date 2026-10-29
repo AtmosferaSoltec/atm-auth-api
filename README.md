@@ -67,7 +67,7 @@ go run ./cmd/api
 | GET | `/tenants/{id}` | One tenant. Tenants (here and in the list) carry `systems`: the systems enabled for them |
 | POST | `/tenants/{id}/systems` | Enable a system for a tenant. Body: `{"system_id"}` |
 | DELETE | `/tenants/{id}/systems/{system_id}` | Disable a system for a tenant. Removes the access its users had in that system (accounts stay) |
-| POST, GET | `/users` | Create and list users. Without `password`, the DNI is the initial password and must be changed at first login |
+| POST, GET | `/users` | Create and list users. Body: `{dni, full_name}`. The DNI is always the initial password and must be changed at first login; a `password` field is rejected |
 | POST | `/users/{id}/reset-password` | Back to the DNI, change required, sessions ended |
 | PUT | `/users/{id}/status` | `{"status": "active" \| "disabled"}`. Disabling ends all sessions |
 | POST | `/access` | Give a user access: `{user_id, system_id, tenant_id, role, manage_users}` |

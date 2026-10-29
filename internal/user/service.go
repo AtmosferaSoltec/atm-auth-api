@@ -29,7 +29,8 @@ func NewService(repo Repository, hasher PasswordHasher, revoker SessionRevoker) 
 type CreateInput struct {
 	DNI      string
 	FullName string
-	// Password is optional. When empty, the initial password is the DNI and the user must change it at first login.
+	// Password is optional and only for internal callers (the HTTP API never sets it): when empty, the initial
+	// password is the DNI and the user must change it at first login.
 	Password string
 }
 

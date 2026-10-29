@@ -422,6 +422,10 @@ func TestSuperadminAPIAndFirstLoginFlow(t *testing.T) {
 	}
 
 	// The owner is created without a password: the DNI is the initial password.
+	// The API never takes a password at creation: the DNI is the initial one.
+	if rec := call(h, "POST", "/v1/admin/users", adm, map[string]string{"dni": "55555555", "full_name": "Con Clave", "password": "elegida-por-el-cliente"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a password at creation must be refused: %d %s", rec.Code, rec.Body)
+	}
 	rec = call(h, "POST", "/v1/admin/users", adm, map[string]string{"dni": "44444444", "full_name": "Dueño Gym"})
 	if rec.Code != http.StatusCreated || !bytes.Contains(rec.Body.Bytes(), []byte(`"must_change_password":true`)) ||
 		bytes.Contains(rec.Body.Bytes(), []byte("password_hash")) || bytes.Contains(rec.Body.Bytes(), []byte("argon2")) {
