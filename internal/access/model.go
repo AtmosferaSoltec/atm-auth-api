@@ -39,9 +39,13 @@ type Grant struct {
 	TenantID    string
 	Role        string
 	ManageUsers bool
-	// SessionMode and SessionMinutes are the system's session policy ("persistent", or "temporary" with its minutes).
-	SessionMode    string
-	SessionMinutes int
+	// SessionMode is the system's session policy: "persistent" or "temporary".
+	SessionMode string
+	// TenantRUC, UserDNI and UserName let the consuming system link or create its own record of the person
+	// and the company without asking anything else.
+	TenantRUC string
+	UserDNI   string
+	UserName  string
 }
 
 // NormalizeRole trims role and reports whether it is acceptable.

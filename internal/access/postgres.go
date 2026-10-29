@@ -60,14 +60,15 @@ func (r *PostgresRepository) Remove(ctx context.Context, userID, systemID string
 func (r *PostgresRepository) Resolve(ctx context.Context, userID, systemCode string) (Grant, error) {
 	var g Grant
 	err := r.pool.QueryRow(ctx, `
-		SELECT a.system_id, s.code, a.tenant_id, a.role, a.manage_users, s.session_mode, COALESCE(s.session_minutes, 0)
+		SELECT a.system_id, s.code, a.tenant_id, a.role, a.manage_users, s.session_mode, t.ruc, u.dni, u.full_name
 		FROM access a
+		JOIN users u          ON u.id = a.user_id
 		JOIN systems s        ON s.id = a.system_id
 		JOIN tenants t        ON t.id = a.tenant_id
 		JOIN tenant_systems ts ON ts.tenant_id = a.tenant_id AND ts.system_id = a.system_id
 		WHERE a.user_id = $1 AND s.code = $2
 		  AND s.status = 'active' AND t.status = 'active' AND ts.status = 'active'`,
-		userID, systemCode).Scan(&g.SystemID, &g.SystemCode, &g.TenantID, &g.Role, &g.ManageUsers, &g.SessionMode, &g.SessionMinutes)
+		userID, systemCode).Scan(&g.SystemID, &g.SystemCode, &g.TenantID, &g.Role, &g.ManageUsers, &g.SessionMode, &g.TenantRUC, &g.UserDNI, &g.UserName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Grant{}, ErrNoAccess
 	}

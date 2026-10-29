@@ -26,14 +26,13 @@ func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 }
 
 var failures = map[error]httpx.Failure{
-	ErrInvalidCode:           {Status: http.StatusBadRequest, Message: "The code must be lowercase letters, digits, '-' or '_', starting with a letter."},
-	ErrInvalidName:           {Status: http.StatusBadRequest, Message: "The name is required."},
-	ErrCodeTaken:             {Status: http.StatusConflict, Message: "A system with that code already exists."},
-	ErrInvalidID:             {Status: http.StatusBadRequest, Message: "Invalid id."},
-	ErrInvalidSessionMode:    {Status: http.StatusBadRequest, Message: "The session mode must be 'persistent' or 'temporary'."},
-	ErrInvalidSessionMinutes: {Status: http.StatusBadRequest, Message: "A temporary session needs between 5 and 1440 minutes."},
-	ErrSystemNotFound:        {Status: http.StatusNotFound, Message: "System not found."},
-	ErrCodeMismatch:          {Status: http.StatusBadRequest, Message: "The confirmation code does not match the system code."},
+	ErrInvalidCode:        {Status: http.StatusBadRequest, Message: "The code must be lowercase letters, digits, '-' or '_', starting with a letter."},
+	ErrInvalidName:        {Status: http.StatusBadRequest, Message: "The name is required."},
+	ErrCodeTaken:          {Status: http.StatusConflict, Message: "A system with that code already exists."},
+	ErrInvalidID:          {Status: http.StatusBadRequest, Message: "Invalid id."},
+	ErrInvalidSessionMode: {Status: http.StatusBadRequest, Message: "The session mode must be 'persistent' or 'temporary'."},
+	ErrSystemNotFound:     {Status: http.StatusNotFound, Message: "System not found."},
+	ErrCodeMismatch:       {Status: http.StatusBadRequest, Message: "The confirmation code does not match the system code."},
 }
 
 type systemJSON struct {
@@ -41,9 +40,8 @@ type systemJSON struct {
 	Code   string `json:"code"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
-	// SessionMode is "persistent" or "temporary". SessionMinutes is 0 for a persistent one.
-	SessionMode    string `json:"session_mode"`
-	SessionMinutes int    `json:"session_minutes"`
+	// SessionMode is "persistent" (remembers the user) or "temporary" (does not).
+	SessionMode string `json:"session_mode"`
 	// HasSecret says whether the system can ask for service tokens. The secret itself is never returned.
 	HasSecret        bool       `json:"has_secret"`
 	SecretCreatedAt  *time.Time `json:"secret_created_at,omitempty"`
@@ -54,23 +52,22 @@ type systemJSON struct {
 func toJSON(s System) systemJSON {
 	return systemJSON{
 		ID: s.ID, Code: s.Code, Name: s.Name, Status: s.Status,
-		SessionMode: s.SessionMode, SessionMinutes: s.SessionMinutes,
-		HasSecret: s.HasSecret, SecretCreatedAt: s.SecretCreatedAt, SecretLastUsedAt: s.SecretLastUsedAt, CreatedAt: s.CreatedAt,
+		SessionMode: s.SessionMode,
+		HasSecret:   s.HasSecret, SecretCreatedAt: s.SecretCreatedAt, SecretLastUsedAt: s.SecretLastUsedAt, CreatedAt: s.CreatedAt,
 	}
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Code           string `json:"code"`
-		Name           string `json:"name"`
-		SessionMode    string `json:"session_mode"`
-		SessionMinutes int    `json:"session_minutes"`
+		Code        string `json:"code"`
+		Name        string `json:"name"`
+		SessionMode string `json:"session_mode"`
 	}
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
 		return
 	}
-	s, err := h.svc.Create(r.Context(), CreateInput{Code: req.Code, Name: req.Name, SessionMode: req.SessionMode, SessionMinutes: req.SessionMinutes})
+	s, err := h.svc.Create(r.Context(), CreateInput{Code: req.Code, Name: req.Name, SessionMode: req.SessionMode})
 	if err != nil {
 		httpx.Fail(w, r, h.log, err, failures)
 		return
@@ -102,14 +99,13 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Mode    string `json:"mode"`
-		Minutes int    `json:"minutes"`
+		Mode string `json:"mode"`
 	}
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
 		return
 	}
-	s, err := h.svc.UpdateSession(r.Context(), r.PathValue("id"), req.Mode, req.Minutes)
+	s, err := h.svc.UpdateSession(r.Context(), r.PathValue("id"), req.Mode)
 	if err != nil {
 		httpx.Fail(w, r, h.log, err, failures)
 		return

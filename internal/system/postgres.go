@@ -20,15 +20,11 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const columns = "id, code, name, status, session_mode, session_minutes, secret_hash IS NOT NULL, secret_created_at, secret_last_used_at, created_at, updated_at"
+const columns = "id, code, name, status, session_mode, secret_hash IS NOT NULL, secret_created_at, secret_last_used_at, created_at, updated_at"
 
 func scan(row pgx.Row) (System, error) {
 	var s System
-	var minutes *int
-	err := row.Scan(&s.ID, &s.Code, &s.Name, &s.Status, &s.SessionMode, &minutes, &s.HasSecret, &s.SecretCreatedAt, &s.SecretLastUsedAt, &s.CreatedAt, &s.UpdatedAt)
-	if minutes != nil {
-		s.SessionMinutes = *minutes
-	}
+	err := row.Scan(&s.ID, &s.Code, &s.Name, &s.Status, &s.SessionMode, &s.HasSecret, &s.SecretCreatedAt, &s.SecretLastUsedAt, &s.CreatedAt, &s.UpdatedAt)
 	return s, err
 }
 
@@ -37,8 +33,8 @@ func (r *PostgresRepository) Create(ctx context.Context, s System) (System, erro
 		s.SessionMode = SessionPersistent
 	}
 	created, err := scan(r.pool.QueryRow(ctx,
-		`INSERT INTO systems (code, name, status, session_mode, session_minutes) VALUES ($1, $2, $3, $4, $5) RETURNING `+columns,
-		s.Code, s.Name, s.Status, s.SessionMode, sessionMinutesArg(s.SessionMinutes)))
+		`INSERT INTO systems (code, name, status, session_mode) VALUES ($1, $2, $3, $4) RETURNING `+columns,
+		s.Code, s.Name, s.Status, s.SessionMode))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
@@ -102,18 +98,10 @@ func (r *PostgresRepository) GetByCode(ctx context.Context, code string) (System
 	return s, nil
 }
 
-// sessionMinutesArg stores 0 (a persistent session) as NULL.
-func sessionMinutesArg(minutes int) *int {
-	if minutes == 0 {
-		return nil
-	}
-	return &minutes
-}
-
-func (r *PostgresRepository) UpdateSession(ctx context.Context, id, mode string, minutes int) (System, error) {
+func (r *PostgresRepository) UpdateSession(ctx context.Context, id, mode string) (System, error) {
 	s, err := scan(r.pool.QueryRow(ctx,
-		`UPDATE systems SET session_mode = $2, session_minutes = $3, updated_at = now() WHERE id = $1 RETURNING `+columns,
-		id, mode, sessionMinutesArg(minutes)))
+		`UPDATE systems SET session_mode = $2, updated_at = now() WHERE id = $1 RETURNING `+columns,
+		id, mode))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return System{}, ErrSystemNotFound
 	}

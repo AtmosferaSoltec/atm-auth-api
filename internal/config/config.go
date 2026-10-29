@@ -33,6 +33,8 @@ type Config struct {
 	JWTIssuer     string
 	AccessTTL     time.Duration
 	RefreshTTL    time.Duration
+	// TemporaryRefreshTTL bounds the session of systems that do not remember their users.
+	TemporaryRefreshTTL time.Duration
 
 	LoginMaxPerSubject int
 	LoginMaxPerIP      int
@@ -60,10 +62,11 @@ func Load() (Config, error) {
 		AdminUser:     os.Getenv("ADMIN_USER"),
 		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
 
-		JWTPrivateKey: os.Getenv("JWT_PRIVATE_KEY"),
-		JWTIssuer:     getenv("JWT_ISSUER", "atm-auth-api"),
-		AccessTTL:     getenvDuration("ACCESS_TOKEN_TTL", 10*time.Minute),
-		RefreshTTL:    getenvDuration("REFRESH_TOKEN_TTL", 30*24*time.Hour),
+		JWTPrivateKey:       os.Getenv("JWT_PRIVATE_KEY"),
+		JWTIssuer:           getenv("JWT_ISSUER", "atm-auth-api"),
+		AccessTTL:           getenvDuration("ACCESS_TOKEN_TTL", 10*time.Minute),
+		RefreshTTL:          getenvDuration("REFRESH_TOKEN_TTL", 90*24*time.Hour),
+		TemporaryRefreshTTL: getenvDuration("TEMPORARY_REFRESH_TTL", 12*time.Hour),
 
 		LoginMaxPerSubject: getenvInt("LOGIN_MAX_ATTEMPTS", 5),
 		LoginMaxPerIP:      getenvInt("LOGIN_MAX_ATTEMPTS_PER_IP", 20),

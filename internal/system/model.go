@@ -12,13 +12,11 @@ const (
 )
 
 const (
-	// SessionPersistent remembers the user: the refresh token lasts the global REFRESH_TOKEN_TTL.
+	// SessionPersistent remembers the user: the refresh token lasts REFRESH_TOKEN_TTL without use.
 	SessionPersistent = "persistent"
-	// SessionTemporary signs the user out after SessionMinutes of inactivity.
+	// SessionTemporary does not remember the user: clients do not keep the session after the tab closes.
+	// The server only bounds it with a fixed ceiling (TEMPORARY_REFRESH_TTL).
 	SessionTemporary = "temporary"
-
-	MinSessionMinutes = 5
-	MaxSessionMinutes = 1440
 )
 
 var codePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
@@ -30,8 +28,6 @@ type System struct {
 	Status string
 	// SessionMode is SessionPersistent or SessionTemporary.
 	SessionMode string
-	// SessionMinutes is the inactivity limit of a temporary session, and 0 for a persistent one.
-	SessionMinutes int
 	// HasSecret says whether the system has a secret to ask for service tokens. The secret itself is never exposed.
 	HasSecret        bool
 	SecretCreatedAt  *time.Time
@@ -44,17 +40,14 @@ func validCode(code string) bool { return codePattern.MatchString(code) }
 
 func normalizeName(name string) string { return strings.Join(strings.Fields(name), " ") }
 
-// normalizeSession validates a session policy. A persistent policy carries no minutes.
-func normalizeSession(mode string, minutes int) (string, int, error) {
+// normalizeSession validates a session mode. An empty one means persistent.
+func normalizeSession(mode string) (string, error) {
 	switch mode {
 	case "", SessionPersistent:
-		return SessionPersistent, 0, nil
+		return SessionPersistent, nil
 	case SessionTemporary:
-		if minutes < MinSessionMinutes || minutes > MaxSessionMinutes {
-			return "", 0, ErrInvalidSessionMinutes
-		}
-		return SessionTemporary, minutes, nil
+		return SessionTemporary, nil
 	default:
-		return "", 0, ErrInvalidSessionMode
+		return "", ErrInvalidSessionMode
 	}
 }

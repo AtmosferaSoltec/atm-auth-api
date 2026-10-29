@@ -18,9 +18,8 @@ func NewService(repo Repository) *Service {
 type CreateInput struct {
 	Code string
 	Name string
-	// SessionMode defaults to SessionPersistent when empty. SessionMinutes only applies to SessionTemporary.
-	SessionMode    string
-	SessionMinutes int
+	// SessionMode defaults to SessionPersistent when empty.
+	SessionMode string
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (System, error) {
@@ -31,11 +30,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (System, error) {
 	if name == "" {
 		return System{}, ErrInvalidName
 	}
-	mode, minutes, err := normalizeSession(in.SessionMode, in.SessionMinutes)
+	mode, err := normalizeSession(in.SessionMode)
 	if err != nil {
 		return System{}, err
 	}
-	created, err := s.repo.Create(ctx, System{Code: in.Code, Name: name, Status: StatusActive, SessionMode: mode, SessionMinutes: minutes})
+	created, err := s.repo.Create(ctx, System{Code: in.Code, Name: name, Status: StatusActive, SessionMode: mode})
 	if err != nil {
 		return System{}, fmt.Errorf("create system: %w", err)
 	}
@@ -71,18 +70,18 @@ func (s *Service) Delete(ctx context.Context, id, confirmCode string) error {
 
 // UpdateSession sets how long users stay signed in to the system. Sessions already open pick the new policy
 // the next time they are refreshed.
-func (s *Service) UpdateSession(ctx context.Context, id, mode string, minutes int) (System, error) {
+func (s *Service) UpdateSession(ctx context.Context, id, mode string) (System, error) {
 	if !platform.IsUUID(id) {
 		return System{}, ErrInvalidID
 	}
 	if mode == "" {
 		return System{}, ErrInvalidSessionMode
 	}
-	mode, minutes, err := normalizeSession(mode, minutes)
+	mode, err := normalizeSession(mode)
 	if err != nil {
 		return System{}, err
 	}
-	updated, err := s.repo.UpdateSession(ctx, id, mode, minutes)
+	updated, err := s.repo.UpdateSession(ctx, id, mode)
 	if err != nil {
 		return System{}, fmt.Errorf("update system session: %w", err)
 	}

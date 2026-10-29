@@ -626,74 +626,127 @@ func TestSessionPolicy(t *testing.T) {
 		}
 		return tokens
 	}
-	setPolicy := func(f *fixture, mode string, minutes int) {
+	setMode := func(f *fixture, mode string) {
 		g := f.access.grants["u1|olympus"]
-		g.SessionMode, g.SessionMinutes = mode, minutes
+		g.SessionMode = mode
 		f.access.grants["u1|olympus"] = g
 	}
 
 	t.Run("persistent keeps the global lifetime", func(t *testing.T) {
 		f := newFixture()
+		f.svc.temporaryTTL = 2 * time.Hour
 		tokens := login(f)
 		if tokens.SessionMode != "persistent" || tokens.RefreshExpiresIn != 24*3600 {
 			t.Fatalf("got %+v", tokens)
 		}
-		setPolicy(f, "persistent", 0)
+		setMode(f, "persistent")
 		if tokens := login(f); tokens.SessionMode != "persistent" || tokens.RefreshExpiresIn != 24*3600 {
 			t.Fatalf("got %+v", tokens)
 		}
 	})
 
-	t.Run("temporary expires after its minutes without use", func(t *testing.T) {
+	t.Run("temporary has a shorter ceiling that renews with use", func(t *testing.T) {
 		f := newFixture()
-		setPolicy(f, "temporary", 15)
+		f.svc.temporaryTTL = 2 * time.Hour
+		setMode(f, "temporary")
 		tokens := login(f)
-		if tokens.SessionMode != "temporary" || tokens.RefreshExpiresIn != 15*60 {
+		if tokens.SessionMode != "temporary" || tokens.RefreshExpiresIn != 2*3600 {
 			t.Fatalf("got %+v", tokens)
 		}
-		if got := f.refresh.byHash[hashToken(tokens.RefreshToken)].ExpiresAt; !got.Equal(f.now.Add(15 * time.Minute)) {
+		if got := f.refresh.byHash[hashToken(tokens.RefreshToken)].ExpiresAt; !got.Equal(f.now.Add(2 * time.Hour)) {
 			t.Fatalf("stored expiry %v", got)
 		}
 
-		// Used within the limit: it renews, and the new token has the full 15 minutes again.
-		*f.now = f.now.Add(10 * time.Minute)
+		// Used within the ceiling: it renews, and the new token has the whole ceiling again.
+		*f.now = f.now.Add(90 * time.Minute)
 		renewed, err := f.svc.Refresh(ctx, tokens.RefreshToken)
-		if err != nil || renewed.RefreshExpiresIn != 15*60 || renewed.SessionMode != "temporary" {
+		if err != nil || renewed.RefreshExpiresIn != 2*3600 || renewed.SessionMode != "temporary" {
 			t.Fatalf("got %+v err %v", renewed, err)
 		}
 
-		// Left alone past the limit: the user must sign in again.
-		*f.now = f.now.Add(16 * time.Minute)
+		// Left behind past the ceiling: the session is over.
+		*f.now = f.now.Add(2*time.Hour + time.Minute)
 		if _, err := f.svc.Refresh(ctx, renewed.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
 			t.Fatalf("got %v", err)
 		}
 	})
 
-	t.Run("a changed policy applies at the next refresh", func(t *testing.T) {
+	t.Run("a changed mode applies at the next refresh", func(t *testing.T) {
 		f := newFixture()
+		f.svc.temporaryTTL = 2 * time.Hour
 		tokens := login(f)
-		setPolicy(f, "temporary", 5)
+		setMode(f, "temporary")
 		renewed, err := f.svc.Refresh(ctx, tokens.RefreshToken)
-		if err != nil || renewed.SessionMode != "temporary" || renewed.RefreshExpiresIn != 5*60 {
+		if err != nil || renewed.SessionMode != "temporary" || renewed.RefreshExpiresIn != 2*3600 {
 			t.Fatalf("got %+v err %v", renewed, err)
 		}
 	})
 
-	t.Run("a temporary session never outlives the global limit", func(t *testing.T) {
+	t.Run("the temporary ceiling never outlives the global limit", func(t *testing.T) {
 		f := newFixture()
-		setPolicy(f, "temporary", 1440+60)
+		f.svc.temporaryTTL = 100 * time.Hour
+		setMode(f, "temporary")
 		if tokens := login(f); tokens.RefreshExpiresIn != 24*3600 {
+			t.Fatalf("got %+v", tokens)
+		}
+	})
+
+	t.Run("without a ceiling configured, temporary uses the global lifetime", func(t *testing.T) {
+		f := newFixture()
+		setMode(f, "temporary")
+		if tokens := login(f); tokens.SessionMode != "temporary" || tokens.RefreshExpiresIn != 24*3600 {
 			t.Fatalf("got %+v", tokens)
 		}
 	})
 
 	t.Run("the superadmin is not affected", func(t *testing.T) {
 		f := newFixture()
+		f.svc.temporaryTTL = 2 * time.Hour
 		tokens, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "1.1.1.1")
 		if err != nil || tokens.SessionMode != "persistent" || tokens.RefreshExpiresIn != 24*3600 {
 			t.Fatalf("got %+v err %v", tokens, err)
 		}
 	})
+}
+
+func TestUserTokenIdentifiesPersonAndCompany(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture()
+	g := f.access.grants["u1|olympus"]
+	g.UserName, g.UserDNI, g.TenantRUC = "Ana Pérez", "11111111", "20123456789"
+	f.access.grants["u1|olympus"] = g
+
+	tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := f.signer.last; c.Name != "Ana Pérez" || c.DNI != "11111111" || c.TenantRUC != "20123456789" {
+		t.Fatalf("login claims: %+v", c)
+	}
+
+	// A refreshed token carries them too, taken from the current grant.
+	g.UserName = "Ana María Pérez"
+	f.access.grants["u1|olympus"] = g
+	if _, err := f.svc.Refresh(ctx, tokens.RefreshToken); err != nil {
+		t.Fatal(err)
+	}
+	if c := f.signer.last; c.Name != "Ana María Pérez" || c.DNI != "11111111" || c.TenantRUC != "20123456789" {
+		t.Fatalf("refresh claims: %+v", c)
+	}
+
+	// The superadmin and a system's service token say nothing about a person or a company.
+	if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "1.1.1.1"); err != nil {
+		t.Fatal(err)
+	}
+	if c := f.signer.last; c.Name != "" || c.DNI != "" || c.TenantRUC != "" {
+		t.Fatalf("superadmin claims: %+v", c)
+	}
+	if _, err := f.svc.ClientToken(ctx, "olympus", "atm_secret", "1.1.1.1"); err != nil {
+		t.Fatal(err)
+	}
+	if c := f.signer.last; c.Name != "" || c.DNI != "" || c.TenantRUC != "" {
+		t.Fatalf("service claims: %+v", c)
+	}
 }
 
 func TestClientToken(t *testing.T) {

@@ -188,20 +188,25 @@ func TestAssignNeedsARoleOfTheSystem(t *testing.T) {
 	}
 }
 
-func TestResolveCarriesSessionPolicy(t *testing.T) {
+func TestResolveCarriesSessionPolicyAndIdentity(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
 	repo := NewPostgresRepository(w.pool)
 	if _, err := repo.Assign(ctx, Access{UserID: w.user, SystemID: w.olympus, TenantID: w.acme, Role: "cajero"}); err != nil {
 		t.Fatal(err)
 	}
-	if g, _ := repo.Resolve(ctx, w.user, "olympus"); g.SessionMode != "persistent" || g.SessionMinutes != 0 {
-		t.Fatalf("default policy: %+v", g)
+	g, err := repo.Resolve(ctx, w.user, "olympus")
+	if err != nil || g.SessionMode != "persistent" {
+		t.Fatalf("default policy: %+v err %v", g, err)
 	}
-	if _, err := w.pool.Exec(ctx, `UPDATE systems SET session_mode = 'temporary', session_minutes = 15 WHERE id = $1`, w.olympus); err != nil {
+	// The grant says who is signing in and for which company, so the system can link its own records.
+	if g.UserDNI != "11111111" || g.UserName != "Ana" || g.TenantRUC != "20123456789" {
+		t.Fatalf("identity missing: %+v", g)
+	}
+	if _, err := w.pool.Exec(ctx, `UPDATE systems SET session_mode = 'temporary' WHERE id = $1`, w.olympus); err != nil {
 		t.Fatal(err)
 	}
-	if g, _ := repo.Resolve(ctx, w.user, "olympus"); g.SessionMode != "temporary" || g.SessionMinutes != 15 {
+	if g, _ := repo.Resolve(ctx, w.user, "olympus"); g.SessionMode != "temporary" {
 		t.Fatalf("temporary policy: %+v", g)
 	}
 }

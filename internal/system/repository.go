@@ -13,7 +13,7 @@ type Repository interface {
 	// Delete removes the system and, by cascade, its tenant enablements, accesses and sessions.
 	// It returns ErrSystemNotFound when there is no match. id must be a valid UUID.
 	Delete(ctx context.Context, id string) error
-	// UpdateSession sets the session policy and returns the system. minutes is 0 for a persistent one.
+	// UpdateSession sets the session mode and returns the system.
 	// It returns ErrSystemNotFound when there is no match. id must be a valid UUID.
-	UpdateSession(ctx context.Context, id, mode string, minutes int) (System, error)
+	UpdateSession(ctx context.Context, id, mode string) (System, error)
 }

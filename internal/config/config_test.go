@@ -16,8 +16,10 @@ func setRequired(t *testing.T) {
 func TestLoad(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		setRequired(t)
-		t.Setenv("APP_ENV", "")
-		t.Setenv("HTTP_ADDR", "")
+		// Defaults must not depend on what the machine running the tests has in its environment.
+		for _, name := range []string{"APP_ENV", "HTTP_ADDR", "ACCESS_TOKEN_TTL", "REFRESH_TOKEN_TTL", "TEMPORARY_REFRESH_TTL", "LOGIN_WINDOW", "LOGIN_MAX_ATTEMPTS"} {
+			t.Setenv(name, "")
+		}
 		cfg, err := Load()
 		if err != nil {
 			t.Fatal(err)
@@ -25,7 +27,7 @@ func TestLoad(t *testing.T) {
 		if cfg.Env != "development" || cfg.HTTPAddr != ":8080" {
 			t.Fatalf("unexpected defaults: %+v", cfg)
 		}
-		if cfg.AccessTTL != 10*time.Minute || cfg.RefreshTTL != 30*24*time.Hour || cfg.LoginMaxPerSubject != 5 || cfg.LoginWindow != 15*time.Minute {
+		if cfg.AccessTTL != 10*time.Minute || cfg.RefreshTTL != 90*24*time.Hour || cfg.TemporaryRefreshTTL != 12*time.Hour || cfg.LoginMaxPerSubject != 5 || cfg.LoginWindow != 15*time.Minute {
 			t.Fatalf("unexpected session defaults: %+v", cfg)
 		}
 	})

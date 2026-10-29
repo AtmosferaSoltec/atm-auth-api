@@ -241,7 +241,8 @@ func TestUserFlowAcrossSystems(t *testing.T) {
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &tok)
 	c := claimsOf(t, tok.AccessToken)
-	if c.Subject != u.ID || c.Role != "user" || c.System != "olympus" || c.Tenant != acme.ID || c.AppRole != "cajero" {
+	if c.Subject != u.ID || c.Role != "user" || c.System != "olympus" || c.Tenant != acme.ID || c.AppRole != "cajero" ||
+		c.DNI != "11111111" || c.Name != "Ana Pérez" || c.TenantRUC != "20123456789" {
 		t.Fatalf("unexpected claims: %+v", c)
 	}
 
@@ -376,16 +377,19 @@ func TestSuperadminAPIAndFirstLoginFlow(t *testing.T) {
 		t.Fatalf("revoked secret: %d", rec.Code)
 	}
 
-	// Session policy: set per system and visible to clients in the login response.
-	if rec := call(h, "PUT", "/v1/admin/systems/"+sys.ID+"/session", adm, map[string]any{"mode": "temporary", "minutes": 2}); rec.Code != http.StatusBadRequest {
-		t.Fatalf("too short: %d %s", rec.Code, rec.Body)
+	// Session mode: set per system (persistent or temporary, no minutes) and visible in the login response.
+	if rec := call(h, "PUT", "/v1/admin/systems/"+sys.ID+"/session", adm, map[string]any{"mode": "forever"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown mode: %d %s", rec.Code, rec.Body)
 	}
-	if rec := call(h, "PUT", "/v1/admin/systems/"+sys.ID+"/session", adm, map[string]any{"mode": "temporary", "minutes": 20}); rec.Code != http.StatusOK ||
-		!bytes.Contains(rec.Body.Bytes(), []byte(`"session_mode":"temporary"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"session_minutes":20`)) {
+	if rec := call(h, "PUT", "/v1/admin/systems/"+sys.ID+"/session", adm, map[string]any{"mode": "temporary", "minutes": 20}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("minutes no longer exist: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h, "PUT", "/v1/admin/systems/"+sys.ID+"/session", adm, map[string]any{"mode": "temporary"}); rec.Code != http.StatusOK ||
+		!bytes.Contains(rec.Body.Bytes(), []byte(`"session_mode":"temporary"`)) || bytes.Contains(rec.Body.Bytes(), []byte("session_minutes")) {
 		t.Fatalf("set temporary: %d %s", rec.Code, rec.Body)
 	}
 	if rec := call(h, "PUT", "/v1/admin/systems/"+sys.ID+"/session", adm, map[string]any{"mode": "persistent"}); rec.Code != http.StatusOK ||
-		!bytes.Contains(rec.Body.Bytes(), []byte(`"session_minutes":0`)) {
+		!bytes.Contains(rec.Body.Bytes(), []byte(`"session_mode":"persistent"`)) {
 		t.Fatalf("set persistent: %d %s", rec.Code, rec.Body)
 	}
 

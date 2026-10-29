@@ -91,8 +91,9 @@ func run(log *slog.Logger) error {
 		Limits: session.Limits{
 			MaxPerSubject: cfg.LoginMaxPerSubject, MaxPerIP: cfg.LoginMaxPerIP, Window: cfg.LoginWindow,
 		},
-		AccessTTL:  cfg.AccessTTL,
-		RefreshTTL: cfg.RefreshTTL,
+		AccessTTL:           cfg.AccessTTL,
+		RefreshTTL:          cfg.RefreshTTL,
+		TemporaryRefreshTTL: cfg.TemporaryRefreshTTL,
 	}, time.Now)
 
 	userSvc := user.NewService(userRepo, hasher, sessionSvc)

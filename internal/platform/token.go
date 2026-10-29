@@ -33,10 +33,15 @@ type Claims struct {
 	Tenant      string `json:"tenant,omitempty"`
 	AppRole     string `json:"app_role,omitempty"`
 	ManageUsers bool   `json:"manage_users,omitempty"`
-	Issuer      string `json:"iss"`
-	IssuedAt    int64  `json:"iat"`
-	ExpiresAt   int64  `json:"exp"`
-	ID          string `json:"jti"`
+	// Name and DNI identify the person, and TenantRUC the company, so a system can link or create its own
+	// record of them. They are informational: authorization never reads them.
+	Name      string `json:"name,omitempty"`
+	DNI       string `json:"dni,omitempty"`
+	TenantRUC string `json:"tenant_ruc,omitempty"`
+	Issuer    string `json:"iss"`
+	IssuedAt  int64  `json:"iat"`
+	ExpiresAt int64  `json:"exp"`
+	ID        string `json:"jti"`
 }
 
 type jwtHeader struct {

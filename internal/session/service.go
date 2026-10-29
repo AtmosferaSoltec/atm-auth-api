@@ -50,7 +50,9 @@ type Service struct {
 	limits     Limits
 	accessTTL  time.Duration
 	refreshTTL time.Duration
-	now        func() time.Time
+	// temporaryTTL bounds the refresh token of a "temporary" system. Zero means no extra bound.
+	temporaryTTL time.Duration
+	now          func() time.Time
 }
 
 type Deps struct {
@@ -71,12 +73,15 @@ type Config struct {
 	Limits     Limits
 	AccessTTL  time.Duration
 	RefreshTTL time.Duration
+	// TemporaryRefreshTTL is how long a "temporary" system's session lasts without being used. It is a ceiling
+	// for sessions left behind, not a timer the user feels: clients drop the session when the tab closes.
+	TemporaryRefreshTTL time.Duration
 }
 
 func NewService(deps Deps, cfg Config, now func() time.Time) *Service {
 	return &Service{
 		deps: deps, admin: cfg.Admin, dummyHash: cfg.DummyHash, limits: cfg.Limits,
-		accessTTL: cfg.AccessTTL, refreshTTL: cfg.RefreshTTL, now: now,
+		accessTTL: cfg.AccessTTL, refreshTTL: cfg.RefreshTTL, temporaryTTL: cfg.TemporaryRefreshTTL, now: now,
 	}
 }
 
@@ -341,9 +346,9 @@ func (s *Service) issue(ctx context.Context, tmpl RefreshToken, grant *access.Gr
 		if grant.SessionMode != "" {
 			mode = grant.SessionMode
 		}
-		// A temporary session lasts its own, shorter inactivity limit, never longer than the global one.
-		if limit := time.Duration(grant.SessionMinutes) * time.Minute; limit > 0 && limit < refreshTTL {
-			refreshTTL = limit
+		// A temporary session is bounded by its own, shorter ceiling.
+		if mode == "temporary" && s.temporaryTTL > 0 && s.temporaryTTL < refreshTTL {
+			refreshTTL = s.temporaryTTL
 		}
 	}
 	tmpl.TokenHash = hashToken(raw)
@@ -366,6 +371,9 @@ func (s *Service) issue(ctx context.Context, tmpl RefreshToken, grant *access.Gr
 		claims.Tenant = grant.TenantID
 		claims.AppRole = grant.Role
 		claims.ManageUsers = grant.ManageUsers
+		claims.Name = grant.UserName
+		claims.DNI = grant.UserDNI
+		claims.TenantRUC = grant.TenantRUC
 	}
 	access, err := s.deps.Signer.Sign(claims)
 	if err != nil {

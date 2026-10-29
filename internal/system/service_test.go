@@ -56,10 +56,10 @@ func (f *fakeRepo) Delete(_ context.Context, id string) error {
 	return ErrSystemNotFound
 }
 
-func (f *fakeRepo) UpdateSession(_ context.Context, id, mode string, minutes int) (System, error) {
+func (f *fakeRepo) UpdateSession(_ context.Context, id, mode string) (System, error) {
 	for code, s := range f.byCode {
 		if s.ID == id {
-			s.SessionMode, s.SessionMinutes = mode, minutes
+			s.SessionMode = mode
 			f.byCode[code] = s
 			return s, nil
 		}
@@ -156,56 +156,50 @@ func TestSessionPolicy(t *testing.T) {
 
 	t.Run("a new system is persistent by default", func(t *testing.T) {
 		s, err := NewService(newFakeRepo()).Create(ctx, CreateInput{Code: "olympus", Name: "Olympus"})
-		if err != nil || s.SessionMode != SessionPersistent || s.SessionMinutes != 0 {
+		if err != nil || s.SessionMode != SessionPersistent {
 			t.Fatalf("got %+v err %v", s, err)
 		}
 	})
 
 	tests := []struct {
-		name    string
-		mode    string
-		minutes int
-		want    error
-		stored  int
+		name string
+		mode string
+		want error
 	}{
-		{"temporary", SessionTemporary, 30, nil, 30},
-		{"lower bound", SessionTemporary, MinSessionMinutes, nil, MinSessionMinutes},
-		{"upper bound", SessionTemporary, MaxSessionMinutes, nil, MaxSessionMinutes},
-		{"too short", SessionTemporary, MinSessionMinutes - 1, ErrInvalidSessionMinutes, 0},
-		{"too long", SessionTemporary, MaxSessionMinutes + 1, ErrInvalidSessionMinutes, 0},
-		{"temporary without minutes", SessionTemporary, 0, ErrInvalidSessionMinutes, 0},
-		{"persistent ignores minutes", SessionPersistent, 99, nil, 0},
-		{"unknown mode", "forever", 30, ErrInvalidSessionMode, 0},
+		{"persistent", SessionPersistent, nil},
+		{"temporary", SessionTemporary, nil},
+		{"unknown mode", "forever", ErrInvalidSessionMode},
+		{"minutes are not a mode", "30", ErrInvalidSessionMode},
 	}
 	for _, tt := range tests {
 		t.Run("create "+tt.name, func(t *testing.T) {
-			s, err := NewService(newFakeRepo()).Create(ctx, CreateInput{Code: "olympus", Name: "Olympus", SessionMode: tt.mode, SessionMinutes: tt.minutes})
-			if !errors.Is(err, tt.want) || (err == nil && s.SessionMinutes != tt.stored) {
+			s, err := NewService(newFakeRepo()).Create(ctx, CreateInput{Code: "olympus", Name: "Olympus", SessionMode: tt.mode})
+			if !errors.Is(err, tt.want) || (err == nil && s.SessionMode != tt.mode) {
 				t.Fatalf("got %+v err %v", s, err)
 			}
 		})
 		t.Run("update "+tt.name, func(t *testing.T) {
 			repo := newFakeRepo()
 			repo.byCode["olympus"] = System{ID: id, Code: "olympus", Name: "Olympus", SessionMode: SessionPersistent}
-			s, err := NewService(repo).UpdateSession(ctx, id, tt.mode, tt.minutes)
-			if !errors.Is(err, tt.want) || (err == nil && (s.SessionMode != tt.mode || s.SessionMinutes != tt.stored)) {
+			s, err := NewService(repo).UpdateSession(ctx, id, tt.mode)
+			if !errors.Is(err, tt.want) || (err == nil && s.SessionMode != tt.mode) {
 				t.Fatalf("got %+v err %v", s, err)
 			}
 		})
 	}
 
 	t.Run("update needs an explicit mode", func(t *testing.T) {
-		if _, err := NewService(newFakeRepo()).UpdateSession(ctx, id, "", 0); !errors.Is(err, ErrInvalidSessionMode) {
+		if _, err := NewService(newFakeRepo()).UpdateSession(ctx, id, ""); !errors.Is(err, ErrInvalidSessionMode) {
 			t.Fatalf("got %v", err)
 		}
 	})
 	t.Run("update validates the id", func(t *testing.T) {
-		if _, err := NewService(newFakeRepo()).UpdateSession(ctx, "x", SessionPersistent, 0); !errors.Is(err, ErrInvalidID) {
+		if _, err := NewService(newFakeRepo()).UpdateSession(ctx, "x", SessionPersistent); !errors.Is(err, ErrInvalidID) {
 			t.Fatalf("got %v", err)
 		}
 	})
 	t.Run("update of an unknown system", func(t *testing.T) {
-		if _, err := NewService(newFakeRepo()).UpdateSession(ctx, id, SessionPersistent, 0); !errors.Is(err, ErrSystemNotFound) {
+		if _, err := NewService(newFakeRepo()).UpdateSession(ctx, id, SessionPersistent); !errors.Is(err, ErrSystemNotFound) {
 			t.Fatalf("got %v", err)
 		}
 	})

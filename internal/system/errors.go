@@ -10,6 +10,5 @@ var (
 	ErrInvalidID      = errors.New("invalid_id")
 	ErrCodeMismatch   = errors.New("code_mismatch")
 
-	ErrInvalidSessionMode    = errors.New("invalid_session_mode")
-	ErrInvalidSessionMinutes = errors.New("invalid_session_minutes")
+	ErrInvalidSessionMode = errors.New("invalid_session_mode")
 )

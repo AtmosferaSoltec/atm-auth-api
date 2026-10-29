@@ -46,7 +46,7 @@ go run ./cmd/api
 | GET | `/health` | Liveness |
 | GET | `/ready` | Readiness (checks the database) |
 | GET | `/.well-known/jwks.json` | Public key (JWKS) other services use to validate access tokens |
-| POST | `/v1/login` | User login. Body: `{"dni", "password", "system"}`. The token carries `system`, `tenant` and `app_role`. `403 no_access` if the user cannot enter that system |
+| POST | `/v1/login` | User login. Body: `{"dni", "password", "system"}`. The token carries `system`, `tenant` and `app_role`, plus `name`, `dni` and `tenant_ruc` so the system can link or create its own record of the person and the company. The response also says `session_mode` and `refresh_expires_in` (seconds), so the client knows whether to remember the session. `403 no_access` if the user cannot enter that system |
 | POST | `/v1/token` | Service token for a system's backend. Body: `{"client_id": <system code>, "client_secret"}`. Returns a short-lived `access_token` (role `service`, subject `system:<code>`) with no refresh token; the backend asks again when it expires. One secret per system works on every microservice, which only verify the token with the JWKS. Throttled like logins |
 | POST | `/v1/admin/login` | Superadmin login. Body: `{"dni", "password"}` |
 | POST | `/v1/password/change` | Body: `{"dni", "current_password", "new_password"}`. Ends all sessions; the user logs in again |
@@ -58,10 +58,10 @@ go run ./cmd/api
 
 | Method | Path | Description |
 |---|---|---|
-| POST, GET | `/systems` | Create and list systems. Create accepts `session_mode` and `session_minutes` (persistent by default) |
+| POST, GET | `/systems` | Create and list systems. Create accepts `session_mode` (`persistent` by default) |
 | POST | `/systems/{id}/secret` | Generate (or regenerate) the system's secret. Returns `{client_id, client_secret}` once; the old secret stops working at once |
 | DELETE | `/systems/{id}/secret` | Revoke the system's secret. Tokens already issued last until they expire |
-| PUT | `/systems/{id}/session` | Session policy of a system. Body: `{"mode": "persistent" \| "temporary", "minutes"}`. Persistent keeps users signed in for `REFRESH_TOKEN_TTL`; temporary signs them out after `minutes` (5 to 1440) without use. Open sessions pick it up at their next refresh |
+| PUT | `/systems/{id}/session` | How a system treats its users' sessions. Body: `{"mode": "persistent" \| "temporary"}`. **Persistent** remembers the user: the session lasts `REFRESH_TOKEN_TTL` (90 days by default) without use. **Temporary** does not: the client keeps no session after the tab closes, and the server only bounds it with `TEMPORARY_REFRESH_TTL` (12 h by default). Open sessions pick the change up at their next refresh |
 | DELETE | `/systems/{id}?confirm={code}` | Delete a system for good, with its tenant enablements, accesses and sessions. `confirm` must equal the system code or it answers `400 code_mismatch` |
 | POST, GET | `/tenants` | Create and list tenants (RUC, legal name, trade name) |
 | GET | `/tenants/{id}` | One tenant. Tenants (here and in the list) carry `systems`: the systems enabled for them |

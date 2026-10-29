@@ -80,30 +80,23 @@ func TestPostgresSessionPolicy(t *testing.T) {
 	pool := platform.NewTestPool(t)
 	repo := NewPostgresRepository(pool)
 
-	created, err := repo.Create(ctx, System{Code: "pulso", Name: "Pulso", Status: StatusActive, SessionMode: SessionTemporary, SessionMinutes: 20})
-	if err != nil || created.SessionMode != SessionTemporary || created.SessionMinutes != 20 {
+	created, err := repo.Create(ctx, System{Code: "pulso", Name: "Pulso", Status: StatusActive, SessionMode: SessionTemporary})
+	if err != nil || created.SessionMode != SessionTemporary {
 		t.Fatalf("got %+v err %v", created, err)
 	}
-	updated, err := repo.UpdateSession(ctx, created.ID, SessionPersistent, 0)
-	if err != nil || updated.SessionMode != SessionPersistent || updated.SessionMinutes != 0 {
+	updated, err := repo.UpdateSession(ctx, created.ID, SessionPersistent)
+	if err != nil || updated.SessionMode != SessionPersistent {
 		t.Fatalf("got %+v err %v", updated, err)
 	}
-	if got, _ := repo.GetByID(ctx, created.ID); got.SessionMode != SessionPersistent || got.SessionMinutes != 0 {
+	if got, _ := repo.GetByID(ctx, created.ID); got.SessionMode != SessionPersistent {
 		t.Fatalf("not persisted: %+v", got)
 	}
-	if _, err := repo.UpdateSession(ctx, "00000000-0000-0000-0000-000000000000", SessionPersistent, 0); !errors.Is(err, ErrSystemNotFound) {
+	if _, err := repo.UpdateSession(ctx, "00000000-0000-0000-0000-000000000000", SessionPersistent); !errors.Is(err, ErrSystemNotFound) {
 		t.Fatalf("got %v", err)
 	}
-	// The database refuses inconsistent policies even if the service is bypassed.
-	for _, q := range []string{
-		`UPDATE systems SET session_mode = 'temporary', session_minutes = NULL`,
-		`UPDATE systems SET session_mode = 'temporary', session_minutes = 2`,
-		`UPDATE systems SET session_mode = 'persistent', session_minutes = 30`,
-		`UPDATE systems SET session_mode = 'forever'`,
-	} {
-		if _, err := pool.Exec(ctx, q); err == nil {
-			t.Fatalf("database accepted %q", q)
-		}
+	// The database refuses an unknown mode even if the service is bypassed.
+	if _, err := pool.Exec(ctx, `UPDATE systems SET session_mode = 'forever'`); err == nil {
+		t.Fatal("database accepted an unknown session mode")
 	}
 }
 
