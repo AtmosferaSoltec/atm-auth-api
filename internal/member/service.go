@@ -74,6 +74,21 @@ func (s *Service) Authorize(ctx context.Context, userID, systemCode, tenantID st
 	return Scope{ManagerID: userID, SystemID: g.SystemID, SystemCode: g.SystemCode, TenantID: g.TenantID}, nil
 }
 
+// ScopeFor is how a system's own backend manages its members. The system comes from its service token and the
+// tenant from the request: whether the person asking may manage users is that system's decision, made with its
+// own roles before it calls. Here only the boundary is enforced: a system reaches the tenants it serves, in its
+// own system, and nothing else.
+func (s *Service) ScopeFor(ctx context.Context, systemCode, tenantID string) (Scope, error) {
+	if systemCode == "" || !platform.IsUUID(tenantID) {
+		return Scope{}, ErrInvalidID
+	}
+	systemID, err := s.repo.SystemFor(ctx, systemCode, tenantID)
+	if err != nil {
+		return Scope{}, fmt.Errorf("scope for system: %w", err)
+	}
+	return Scope{SystemID: systemID, SystemCode: systemCode, TenantID: tenantID}, nil
+}
+
 func (s *Service) List(ctx context.Context, sc Scope) ([]Member, error) {
 	members, err := s.repo.List(ctx, sc.SystemID, sc.TenantID)
 	if err != nil {
@@ -138,7 +153,8 @@ func (s *Service) Add(ctx context.Context, sc Scope, in AddInput) (Member, error
 	return m, nil
 }
 
-// editable returns the member if the owner may change it: it must belong to the scope and not be an owner.
+// editable returns the member if it may be changed: it must belong to the scope and not hold the reserved role.
+// There are no owners any more: who may manage users is each system's decision.
 func (s *Service) editable(ctx context.Context, sc Scope, userID string) (Member, error) {
 	if !platform.IsUUID(userID) {
 		return Member{}, ErrInvalidID
@@ -147,7 +163,7 @@ func (s *Service) editable(ctx context.Context, sc Scope, userID string) (Member
 	if err != nil {
 		return Member{}, err
 	}
-	if m.ManageUsers || isReserved(m.Role) {
+	if isReserved(m.Role) {
 		return Member{}, ErrProtectedMember
 	}
 	return m, nil

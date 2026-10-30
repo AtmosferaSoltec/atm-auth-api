@@ -30,9 +30,21 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /v1/tenant/members/{user_id}/reset-password", h.guard(h.resetPassword))
 }
 
+// RegisterService mounts the routes a system's backend calls with its service token to manage the members of one
+// of its tenants (`tenant_id` in the query). Who may call them is decided by that system, not here.
+func (h *Handler) RegisterService(mux *http.ServeMux, service httpx.Middleware) {
+	mux.Handle("GET /v1/service/roles", service(h.serviceScope(h.roles)))
+	mux.Handle("GET /v1/service/members", service(h.serviceScope(h.list)))
+	mux.Handle("POST /v1/service/members", service(h.serviceScope(h.add)))
+	mux.Handle("PUT /v1/service/members/{user_id}", service(h.serviceScope(h.updateRole)))
+	mux.Handle("DELETE /v1/service/members/{user_id}", service(h.serviceScope(h.remove)))
+	mux.Handle("POST /v1/service/members/{user_id}/reset-password", service(h.serviceScope(h.resetPassword)))
+}
+
 var failures = map[error]httpx.Failure{
 	ErrNotManager:      {Status: http.StatusForbidden, Message: "You are not allowed to manage users."},
 	ErrInvalidID:       {Status: http.StatusBadRequest, Message: "Invalid id."},
+	ErrTenantNotServed: {Status: http.StatusForbidden, Message: "This system does not serve that company."},
 	ErrMemberNotFound:  {Status: http.StatusNotFound, Message: "Member not found."},
 	ErrProtectedMember: {Status: http.StatusForbidden, Message: "Only the platform administrator can change this member."},
 	ErrResetNotAllowed: {Status: http.StatusForbidden, Message: "This person also belongs to other organizations. Ask the platform administrator to reset the password."},
@@ -56,6 +68,23 @@ func (h *Handler) guard(next func(http.ResponseWriter, *http.Request, Scope)) ht
 		}
 		next(w, r, sc)
 	}))
+}
+
+// serviceScope runs next for a service token, scoped to the token's system and the `tenant_id` of the query.
+func (h *Handler) serviceScope(next func(http.ResponseWriter, *http.Request, Scope)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := auth.ClaimsFromContext(r.Context())
+		if !ok {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "Insufficient permissions.")
+			return
+		}
+		sc, err := h.svc.ScopeFor(r.Context(), claims.System, r.URL.Query().Get("tenant_id"))
+		if err != nil {
+			httpx.Fail(w, r, h.log, err, failures)
+			return
+		}
+		next(w, r, sc)
+	})
 }
 
 type memberJSON struct {

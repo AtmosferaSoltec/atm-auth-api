@@ -11,7 +11,7 @@ import (
 
 const (
 	sysID    = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	tenantID = "bbbbbbbb-bbbbbbbb-bbbb-bbbbbbbbbbbb"
+	tenantID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 	owner    = "11111111-1111-1111-1111-111111111111"
 	cashier  = "22222222-2222-2222-2222-222222222222"
 	other    = "33333333-3333-3333-3333-333333333333"
@@ -57,6 +57,13 @@ func (f *fakeRepo) Remove(_ context.Context, _, _, id string) (bool, error) {
 	return !f.unchanged, nil
 }
 func (f *fakeRepo) Roles(context.Context, string) ([]RoleOption, error) { return f.roles, nil }
+
+func (f *fakeRepo) SystemFor(_ context.Context, code, tenant string) (string, error) {
+	if code == "olympus" && tenant == tenantID {
+		return sysID, nil
+	}
+	return "", ErrTenantNotServed
+}
 
 func (f *fakeRepo) OnlyInTenant(_ context.Context, id, _ string) (bool, error) {
 	return f.onlyHere[id], nil
@@ -244,22 +251,22 @@ func TestAdd(t *testing.T) {
 	})
 }
 
-func TestOwnersAreProtected(t *testing.T) {
+func TestOnlyTheReservedRoleIsProtected(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture()
-	// Neither another owner nor the caller themselves can be changed through this API.
-	for _, id := range []string{manager2, owner} {
-		if err := f.svc.UpdateRole(ctx, scope, id, "cajero"); !errors.Is(err, ErrProtectedMember) {
-			t.Fatalf("update %s: %v", id, err)
-		}
-		if err := f.svc.Remove(ctx, scope, id); !errors.Is(err, ErrProtectedMember) {
-			t.Fatalf("remove %s: %v", id, err)
-		}
-		if err := f.svc.ResetPassword(ctx, scope, id); !errors.Is(err, ErrProtectedMember) {
-			t.Fatalf("reset %s: %v", id, err)
-		}
+	f.repo.members[other] = Member{UserID: other, Role: "superadmin"}
+
+	// Someone who used to be an owner is an ordinary member now: the system decides who manages whom.
+	if err := f.svc.UpdateRole(ctx, scope, manager2, "cajero"); err != nil {
+		t.Fatalf("a former owner must be editable: %v", err)
 	}
-	if len(f.repo.updated) != 0 || len(f.repo.removed) != 0 || len(f.users.reset) != 0 {
+	if err := f.svc.Remove(ctx, scope, owner); err != nil {
+		t.Fatalf("a former owner must be removable: %v", err)
+	}
+	if err := f.svc.ResetPassword(ctx, scope, other); !errors.Is(err, ErrProtectedMember) {
+		t.Fatalf("the reserved role must stay protected: %v", err)
+	}
+	if len(f.users.reset) != 0 {
 		t.Fatal("a protected member was modified")
 	}
 }
@@ -405,5 +412,28 @@ func TestAddRefusesSomeoneOfAnotherCompany(t *testing.T) {
 	}
 	if len(f.access.assigned) != 0 {
 		t.Fatalf("assigned %+v", f.access.assigned)
+	}
+}
+
+func TestScopeFor(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture()
+
+	sc, err := f.svc.ScopeFor(ctx, "olympus", tenantID)
+	if err != nil || sc.SystemID != sysID || sc.TenantID != tenantID || sc.SystemCode != "olympus" {
+		t.Fatalf("got %+v err %v", sc, err)
+	}
+	for name, tc := range map[string]struct{ system, tenant string }{
+		"a bad tenant id":             {"olympus", "nope"},
+		"no system":                   {"", tenantID},
+		"a system that is not served": {"pulso", tenantID},
+		"another tenant":              {"olympus", "cccccccc-cccc-cccc-cccc-cccccccccccc"},
+	} {
+		if _, err := f.svc.ScopeFor(ctx, tc.system, tc.tenant); err == nil {
+			t.Fatalf("%s: expected an error", name)
+		}
+	}
+	if _, err := f.svc.ScopeFor(ctx, "pulso", tenantID); !errors.Is(err, ErrTenantNotServed) {
+		t.Fatalf("got %v", err)
 	}
 }

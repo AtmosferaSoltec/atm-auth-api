@@ -18,6 +18,9 @@ type Repository interface {
 	Remove(ctx context.Context, systemID, tenantID, userID string) (bool, error)
 	// Roles returns the roles the system defines, so an owner can choose one.
 	Roles(ctx context.Context, systemID string) ([]RoleOption, error)
+	// SystemFor returns the id of the system when it is active and serves the tenant (the tenant is active and has
+	// the system enabled). It returns ErrTenantNotServed otherwise.
+	SystemFor(ctx context.Context, systemCode, tenantID string) (string, error)
 	// OnlyInTenant reports whether every access of the user belongs to tenantID.
 	OnlyInTenant(ctx context.Context, userID, tenantID string) (bool, error)
 }

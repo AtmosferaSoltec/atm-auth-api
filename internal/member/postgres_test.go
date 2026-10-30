@@ -121,3 +121,54 @@ func TestPostgresScopeIsolation(t *testing.T) {
 		}
 	})
 }
+
+// A system reaches only the tenants that are active and have it enabled.
+func TestPostgresSystemFor(t *testing.T) {
+	ctx := context.Background()
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
+
+	id := func(q string, args ...any) string {
+		var v string
+		if err := pool.QueryRow(ctx, q+" RETURNING id", args...).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	exec := func(q string, args ...any) {
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	olympus := id(`INSERT INTO systems (code, name) VALUES ('olympus', 'Olympus')`)
+	pulso := id(`INSERT INTO systems (code, name) VALUES ('pulso', 'Pulso')`)
+	tenant := func(ruc string) string {
+		return id(`WITH c AS (INSERT INTO clients (name) VALUES ($1) RETURNING id) INSERT INTO tenants (ruc, legal_name, client_id) SELECT $1, $1, id FROM c`, ruc)
+	}
+	served, noSystem, off, disabledLink := tenant("20111111111"), tenant("20222222222"), tenant("20333333333"), tenant("20444444444")
+	exec(`INSERT INTO tenant_systems (tenant_id, system_id) VALUES ($1, $2), ($3, $2), ($4, $2)`, served, olympus, off, disabledLink)
+	exec(`UPDATE tenants SET status = 'disabled' WHERE id = $1`, off)
+	exec(`UPDATE tenant_systems SET status = 'disabled' WHERE tenant_id = $1`, disabledLink)
+	_ = noSystem
+
+	if got, err := repo.SystemFor(ctx, "olympus", served); err != nil || got != olympus {
+		t.Fatalf("got %q err %v", got, err)
+	}
+	for name, tc := range map[string]struct{ system, tenant string }{
+		"a system the company does not have": {"pulso", served},
+		"a company without the system":       {"olympus", noSystem},
+		"a disabled company":                 {"olympus", off},
+		"a disabled enablement":              {"olympus", disabledLink},
+		"an unknown system":                  {"nope", served},
+		"an unknown company":                 {"olympus", "00000000-0000-0000-0000-000000000000"},
+	} {
+		if _, err := repo.SystemFor(ctx, tc.system, tc.tenant); !errors.Is(err, ErrTenantNotServed) {
+			t.Fatalf("%s: got %v", name, err)
+		}
+	}
+	exec(`UPDATE systems SET status = 'disabled' WHERE id = $1`, olympus)
+	if _, err := repo.SystemFor(ctx, "olympus", served); !errors.Is(err, ErrTenantNotServed) {
+		t.Fatalf("a disabled system must not reach any company: got %v", err)
+	}
+	_ = pulso
+}

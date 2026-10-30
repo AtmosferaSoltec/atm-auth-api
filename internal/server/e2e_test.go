@@ -726,11 +726,6 @@ func TestTenantOwnerAPI(t *testing.T) {
 		t.Fatalf("list: %s", rec.Body)
 	}
 
-	// Owners are protected, including from themselves.
-	if rec := call(h, "DELETE", "/v1/tenant/members/"+ownerA.ID, tokA, nil); rec.Code != http.StatusForbidden {
-		t.Fatalf("owner removing themselves: %d", rec.Code)
-	}
-
 	// Reset: allowed for someone who only exists in this tenant.
 	if rec := call(h, "POST", "/v1/tenant/members/"+added.UserID+"/reset-password", tokA, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("reset exclusive member: %d %s", rec.Code, rec.Body)

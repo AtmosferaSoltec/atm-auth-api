@@ -117,3 +117,20 @@ func (r *PostgresRepository) OnlyInTenant(ctx context.Context, userID, tenantID 
 	}
 	return !other, nil
 }
+
+func (r *PostgresRepository) SystemFor(ctx context.Context, systemCode, tenantID string) (string, error) {
+	var systemID string
+	err := r.pool.QueryRow(ctx, `
+		SELECT s.id
+		  FROM systems s
+		  JOIN tenant_systems ts ON ts.system_id = s.id AND ts.status = 'active'
+		  JOIN tenants t ON t.id = ts.tenant_id AND t.status = 'active'
+		 WHERE s.code = $1 AND s.status = 'active' AND t.id = $2`, systemCode, tenantID).Scan(&systemID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrTenantNotServed
+	}
+	if err != nil {
+		return "", fmt.Errorf("select system of tenant: %w", err)
+	}
+	return systemID, nil
+}
