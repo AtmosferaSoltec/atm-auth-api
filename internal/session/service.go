@@ -414,6 +414,8 @@ func (s *Service) issue(ctx context.Context, tmpl RefreshToken, grant *access.Gr
 		claims.Name = grant.UserName
 		claims.DNI = grant.UserDNI
 		claims.TenantRUC = grant.TenantRUC
+		claims.Client = grant.ClientID
+		claims.ClientName = grant.ClientName
 	}
 	access, err := s.deps.Signer.Sign(claims)
 	if err != nil {

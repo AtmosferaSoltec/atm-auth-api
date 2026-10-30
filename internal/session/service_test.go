@@ -740,13 +740,15 @@ func TestUserTokenIdentifiesPersonAndCompany(t *testing.T) {
 	f := newFixture()
 	g := f.access.grants["u1|olympus"]
 	g.UserName, g.UserDNI, g.TenantRUC = "Ana Pérez", "11111111", "20123456789"
+	g.ClientID, g.ClientName = "client-1", "Gimnasios Ana"
 	f.access.grants["u1|olympus"] = g
 
 	tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c := f.signer.last; c.Name != "Ana Pérez" || c.DNI != "11111111" || c.TenantRUC != "20123456789" {
+	if c := f.signer.last; c.Name != "Ana Pérez" || c.DNI != "11111111" || c.TenantRUC != "20123456789" ||
+		c.Client != "client-1" || c.ClientName != "Gimnasios Ana" {
 		t.Fatalf("login claims: %+v", c)
 	}
 
@@ -756,7 +758,7 @@ func TestUserTokenIdentifiesPersonAndCompany(t *testing.T) {
 	if _, err := f.svc.Refresh(ctx, tokens.RefreshToken, ""); err != nil {
 		t.Fatal(err)
 	}
-	if c := f.signer.last; c.Name != "Ana María Pérez" || c.DNI != "11111111" || c.TenantRUC != "20123456789" {
+	if c := f.signer.last; c.Name != "Ana María Pérez" || c.DNI != "11111111" || c.TenantRUC != "20123456789" || c.Client != "client-1" {
 		t.Fatalf("refresh claims: %+v", c)
 	}
 
@@ -764,13 +766,13 @@ func TestUserTokenIdentifiesPersonAndCompany(t *testing.T) {
 	if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "1.1.1.1"); err != nil {
 		t.Fatal(err)
 	}
-	if c := f.signer.last; c.Name != "" || c.DNI != "" || c.TenantRUC != "" {
+	if c := f.signer.last; c.Name != "" || c.DNI != "" || c.TenantRUC != "" || c.Client != "" {
 		t.Fatalf("superadmin claims: %+v", c)
 	}
 	if _, err := f.svc.ClientToken(ctx, "olympus", "atm_secret", "1.1.1.1"); err != nil {
 		t.Fatal(err)
 	}
-	if c := f.signer.last; c.Name != "" || c.DNI != "" || c.TenantRUC != "" {
+	if c := f.signer.last; c.Name != "" || c.DNI != "" || c.TenantRUC != "" || c.Client != "" {
 		t.Fatalf("service claims: %+v", c)
 	}
 }

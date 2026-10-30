@@ -80,9 +80,10 @@ func TestRoleCatalogMigrationKeepsExistingAccesses(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM system_roles), (SELECT count(*) FROM access)`).Scan(&roles, &accesses); err != nil {
 		t.Fatal(err)
 	}
-	// olympus: cajero + admin; pulso: cajero. Nobody lost their access.
-	if roles != 3 || accesses != 4 {
-		t.Fatalf("roles=%d accesses=%d, want 3 and 4", roles, accesses)
+	// From the accesses: olympus has cajero + admin, pulso has cajero. The seeds add pulso's admin and receptionist
+	// and lavendimia's admin and cashier. Nobody lost their access.
+	if roles != 7 || accesses != 4 {
+		t.Fatalf("roles=%d accesses=%d, want 7 and 4", roles, accesses)
 	}
 	// From now on the catalog is enforced.
 	if _, err := pool.Exec(ctx, `UPDATE access SET role = 'inventado' WHERE system_id = $1`, olympus); err == nil {

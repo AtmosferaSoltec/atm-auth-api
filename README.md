@@ -47,7 +47,7 @@ go run ./cmd/api
 | GET | `/health` | Liveness |
 | GET | `/ready` | Readiness (checks the database) |
 | GET | `/.well-known/jwks.json` | Public key (JWKS) other services use to validate access tokens |
-| POST | `/v1/login` | User login. Body: `{"dni", "password", "system"}`, plus an optional `tenant_id` to enter a specific company. Without it the person enters the company they used last, or else the first one they were given. The token carries `system`, `tenant` and `app_role`, plus `name`, `dni` and `tenant_ruc` so the system can link or create its own record of the person and the company. The response also says `session_mode` and `refresh_expires_in` (seconds), so the client knows whether to remember the session. `403 no_access` if the user cannot enter that system |
+| POST | `/v1/login` | User login. Body: `{"dni", "password", "system"}`, plus an optional `tenant_id` to enter a specific company. Without it the person enters the company they used last, or else the first one they were given. The token carries `system`, `tenant` and `app_role`, plus `name`, `dni`, `tenant_ruc`, `client` (the id of the customer that owns the company) and `client_name`, so the system can link or create its own record of the person, the company and its owner. Pulso, for example, reads `client` as the organization and each `tenant` as one of its gyms. The response also says `session_mode` and `refresh_expires_in` (seconds), so the client knows whether to remember the session. `403 no_access` if the user cannot enter that system |
 | POST | `/v1/token` | Service token for a system's backend. Body: `{"client_id": <system code>, "client_secret"}`. Returns a short-lived `access_token` (role `service`, subject `system:<code>`) with no refresh token; the backend asks again when it expires. One secret per system works on every microservice, which only verify the token with the JWKS. Throttled like logins |
 | POST | `/v1/admin/login` | Superadmin login. Body: `{"dni", "password"}` |
 | POST | `/v1/password/change` | Body: `{"dni", "current_password", "new_password"}`. Ends all sessions; the user logs in again |
@@ -60,11 +60,10 @@ go run ./cmd/api
 
 | Method | Path | Description |
 |---|---|---|
-| POST, GET | `/systems` | Create and list systems. Create accepts `session_mode` (`persistent` by default) |
+| GET | `/systems` | List the systems. They are not created from the console: see "Systems and roles are defined in code" below |
 | POST | `/systems/{id}/secret` | Generate (or regenerate) the system's secret. Returns `{client_id, client_secret}` once; the old secret stops working at once |
 | DELETE | `/systems/{id}/secret` | Revoke the system's secret. Tokens already issued last until they expire |
 | PUT | `/systems/{id}/session` | How a system treats its users' sessions. Body: `{"mode": "persistent" \| "temporary"}`. **Persistent** remembers the user: the session lasts `REFRESH_TOKEN_TTL` (90 days by default) without use. **Temporary** does not: the client keeps no session after the tab closes, and the server only bounds it with `TEMPORARY_REFRESH_TTL` (12 h by default). Open sessions pick the change up at their next refresh |
-| DELETE | `/systems/{id}?confirm={code}` | Delete a system for good, with its tenant enablements, accesses and sessions. `confirm` must equal the system code or it answers `400 code_mismatch` |
 | POST, GET | `/tenants` | Create and list tenants (RUC, legal name, trade name) |
 | GET | `/tenants/{id}` | One tenant. Tenants (here and in the list) carry `systems`: the systems enabled for them |
 | PUT | `/tenants/{id}` | Edit the company profile. Body (all fields are sent; an empty one is cleared, only `legal_name` is required): `{legal_name, trade_name, address, department, province, district, ubigeo, phone, email, logo_file_id}`. `ubigeo` is 6 digits, `logo_file_id` the id of the logo in atm-storage-api (never a URL). The RUC cannot change. Systems read this data instead of keeping their own copy |
@@ -90,7 +89,7 @@ For a system's own backend, with the token from `POST /v1/token`. The system is 
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/tenants` | The customers of the system: active tenants that have it enabled. Each is `{id, ruc, legal_name, trade_name, display_name, address, department, province, district, ubigeo, phone, email, logo_file_id}` (profile fields are empty strings, and `logo_file_id` null, when not set); the list never says what other systems a customer uses |
+| GET | `/tenants` | The customers of the system: active tenants that have it enabled. Each is `{id, ruc, legal_name, trade_name, display_name, address, department, province, district, ubigeo, phone, email, logo_file_id, client_id, client_name}` (profile fields are empty strings, and `logo_file_id` null, when not set); the list never says what other systems a customer uses |
 
 ### Tenant owner API (`/v1/tenant/members`, requires a user token with `manage_users`)
 
@@ -112,8 +111,13 @@ The role `superadmin` is reserved for the platform's own team: it is hidden from
 Login is throttled per DNI and per IP (`LOGIN_*` variables) and answers `429 too_many_attempts` with `Retry-After`.
 Presenting a refresh token that was already used revokes its whole session.
 
+## Systems and roles are defined in code
+
+The superadmin does not create systems from the console: the catalog lives in the migrations. To add a system, add it to a new migration like `migrations/0012_seed_systems.sql` (`INSERT ... ON CONFLICT (code) DO NOTHING`) and its starting roles to one like `0013_seed_system_roles.sql`, then deploy. Both are idempotent: a system or role that already exists keeps what the console set (session mode, secret, descriptions) and nothing is ever deleted. Secrets are never seeded; generate them per environment from the console. Today: `pulso` (roles `admin`, `receptionist`) and `lavendimia` (`admin`, `cashier`).
+
 ## Access model
 
+- A **client** is the real customer who owns one or more companies; a **tenant** is one of those companies (RUC, legal name, trade name). Systems use the client to decide what the companies of one owner share (in Pulso, the client is the organization and each company is a gym).
 - A **tenant** is a customer company (RUC, legal name, trade name). A **system** is a product (Olympus, Pulso...).
 - `tenant_systems`: which systems a tenant has contracted.
 - `access`: which user enters which system, in which tenant, with which role. `UNIQUE (user_id, system_id, tenant_id)`: a person can work for **several companies in the same system** (for example the owner of two businesses), once each. Only the superadmin gives a person a second company: an owner cannot add someone who already belongs to another company of the system (`409`).

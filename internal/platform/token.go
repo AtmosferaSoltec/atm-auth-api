@@ -38,10 +38,14 @@ type Claims struct {
 	Name      string `json:"name,omitempty"`
 	DNI       string `json:"dni,omitempty"`
 	TenantRUC string `json:"tenant_ruc,omitempty"`
-	Issuer    string `json:"iss"`
-	IssuedAt  int64  `json:"iat"`
-	ExpiresAt int64  `json:"exp"`
-	ID        string `json:"jti"`
+	// Client is the id of the customer that owns the tenant, and ClientName its name. A system uses them to group
+	// the companies of one owner (for Pulso: the organization that owns several gyms). Informational, like the rest.
+	Client     string `json:"client,omitempty"`
+	ClientName string `json:"client_name,omitempty"`
+	Issuer     string `json:"iss"`
+	IssuedAt   int64  `json:"iat"`
+	ExpiresAt  int64  `json:"exp"`
+	ID         string `json:"jti"`
 }
 
 type jwtHeader struct {

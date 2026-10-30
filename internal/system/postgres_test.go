@@ -57,7 +57,7 @@ func TestMigrationRegistersTheSystemsWithoutTouchingExistingOnes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range all {
-		if name == "0012_seed_systems.sql" {
+		if name == "0012_seed_systems.sql" || name == "0013_seed_system_roles.sql" {
 			continue
 		}
 		data, err := fs.ReadFile(migrations.Files, name)
@@ -98,6 +98,29 @@ func TestMigrationRegistersTheSystemsWithoutTouchingExistingOnes(t *testing.T) {
 	want := []row{{"lavendimia", "Nombre propio", "temporary", true}, {"pulso", "Pulso", "persistent", false}}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+
+	var roles []string
+	roleRows, err := pool.Query(ctx, `SELECT s.code || '/' || r.name FROM system_roles r JOIN systems s ON s.id = r.system_id ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer roleRows.Close()
+	for roleRows.Next() {
+		var name string
+		if err := roleRows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		roles = append(roles, name)
+	}
+	wantRoles := []string{"lavendimia/admin", "lavendimia/cashier", "pulso/admin", "pulso/receptionist"}
+	if len(roles) != len(wantRoles) {
+		t.Fatalf("roles %v, want %v", roles, wantRoles)
+	}
+	for i := range wantRoles {
+		if roles[i] != wantRoles[i] {
+			t.Fatalf("roles %v, want %v", roles, wantRoles)
+		}
 	}
 }
 

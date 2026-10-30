@@ -255,7 +255,7 @@ func TestUserFlowAcrossSystems(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &tok)
 	c := claimsOf(t, tok.AccessToken)
 	if c.Subject != u.ID || c.Role != "user" || c.System != "olympus" || c.Tenant != acme.ID || c.AppRole != "cajero" ||
-		c.DNI != "11111111" || c.Name != "Ana Pérez" || c.TenantRUC != "20123456789" {
+		c.DNI != "11111111" || c.Name != "Ana Pérez" || c.TenantRUC != "20123456789" || c.Client != acme.ClientID || c.ClientName == "" {
 		t.Fatalf("unexpected claims: %+v", c)
 	}
 

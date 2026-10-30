@@ -46,6 +46,9 @@ type Grant struct {
 	TenantRUC string
 	UserDNI   string
 	UserName  string
+	// ClientID and ClientName are the customer that owns the tenant.
+	ClientID   string
+	ClientName string
 }
 
 // NormalizeRole trims role and reports whether it is acceptable.

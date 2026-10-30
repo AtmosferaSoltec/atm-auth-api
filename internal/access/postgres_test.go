@@ -284,6 +284,10 @@ func TestResolveCarriesSessionPolicyAndIdentity(t *testing.T) {
 	if g.UserDNI != "11111111" || g.UserName != "Ana" || g.TenantRUC != "20123456789" {
 		t.Fatalf("identity missing: %+v", g)
 	}
+	// ...and which customer owns that company.
+	if g.ClientID == "" || g.ClientName == "" {
+		t.Fatalf("client missing: %+v", g)
+	}
 	if _, err := w.pool.Exec(ctx, `UPDATE systems SET session_mode = 'temporary' WHERE id = $1`, w.olympus); err != nil {
 		t.Fatal(err)
 	}

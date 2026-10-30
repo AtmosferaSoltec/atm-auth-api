@@ -227,7 +227,8 @@ type serviceTenantJSON struct {
 	// LogoFileID is null while the company has no logo.
 	LogoFileID *string `json:"logo_file_id"`
 	// ClientID is the owner of the company. A system shares data between the companies that have the same one.
-	ClientID string `json:"client_id"`
+	ClientID   string `json:"client_id"`
+	ClientName string `json:"client_name"`
 }
 
 func (h *Handler) listForSystem(w http.ResponseWriter, r *http.Request) {
@@ -246,7 +247,7 @@ func (h *Handler) listForSystem(w http.ResponseWriter, r *http.Request) {
 		out = append(out, serviceTenantJSON{
 			ID: t.ID, RUC: t.RUC, LegalName: t.LegalName, TradeName: t.TradeName, DisplayName: t.DisplayName(),
 			Address: t.Address, Department: t.Department, Province: t.Province, District: t.District,
-			Ubigeo: t.Ubigeo, Phone: t.Phone, Email: t.Email, LogoFileID: logoPointer(t.LogoFileID), ClientID: t.ClientID,
+			Ubigeo: t.Ubigeo, Phone: t.Phone, Email: t.Email, LogoFileID: logoPointer(t.LogoFileID), ClientID: t.ClientID, ClientName: t.ClientName,
 		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})

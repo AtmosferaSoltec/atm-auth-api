@@ -109,18 +109,19 @@ func (r *PostgresRepository) MarkUsed(ctx context.Context, userID, systemID, ten
 func (r *PostgresRepository) Resolve(ctx context.Context, userID, systemCode, tenantID string) (Grant, error) {
 	var g Grant
 	err := r.pool.QueryRow(ctx, `
-		SELECT a.system_id, s.code, a.tenant_id, a.role, a.manage_users, s.session_mode, t.ruc, u.dni, u.full_name
+		SELECT a.system_id, s.code, a.tenant_id, a.role, a.manage_users, s.session_mode, t.ruc, u.dni, u.full_name, t.client_id, c.name
 		FROM access a
 		JOIN users u          ON u.id = a.user_id
 		JOIN systems s        ON s.id = a.system_id
 		JOIN tenants t        ON t.id = a.tenant_id
+		JOIN clients c        ON c.id = t.client_id
 		JOIN tenant_systems ts ON ts.tenant_id = a.tenant_id AND ts.system_id = a.system_id
 		WHERE a.user_id = $1 AND s.code = $2
 		  AND ($3 = '' OR a.tenant_id::text = $3)
 		  AND s.status = 'active' AND t.status = 'active' AND ts.status = 'active'
 		ORDER BY a.last_used_at DESC NULLS LAST, a.created_at, a.id
 		LIMIT 1`,
-		userID, systemCode, tenantID).Scan(&g.SystemID, &g.SystemCode, &g.TenantID, &g.Role, &g.ManageUsers, &g.SessionMode, &g.TenantRUC, &g.UserDNI, &g.UserName)
+		userID, systemCode, tenantID).Scan(&g.SystemID, &g.SystemCode, &g.TenantID, &g.Role, &g.ManageUsers, &g.SessionMode, &g.TenantRUC, &g.UserDNI, &g.UserName, &g.ClientID, &g.ClientName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Grant{}, ErrNoAccess
 	}
