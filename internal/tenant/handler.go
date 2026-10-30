@@ -23,6 +23,7 @@ func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 	mux.Handle("POST /v1/admin/tenants", admin(http.HandlerFunc(h.create)))
 	mux.Handle("GET /v1/admin/tenants", admin(http.HandlerFunc(h.list)))
 	mux.Handle("GET /v1/admin/tenants/{id}", admin(http.HandlerFunc(h.get)))
+	mux.Handle("PUT /v1/admin/tenants/{id}", admin(http.HandlerFunc(h.update)))
 	mux.Handle("POST /v1/admin/tenants/{id}/systems", admin(http.HandlerFunc(h.enableSystem)))
 	mux.Handle("DELETE /v1/admin/tenants/{id}/systems/{system_id}", admin(http.HandlerFunc(h.disableSystem)))
 }
@@ -37,6 +38,11 @@ var failures = map[error]httpx.Failure{
 	ErrInvalidRUC:           {Status: http.StatusBadRequest, Message: "The RUC must have 11 digits."},
 	ErrInvalidLegalName:     {Status: http.StatusBadRequest, Message: "The legal name is required."},
 	ErrInvalidID:            {Status: http.StatusBadRequest, Message: "Invalid id."},
+	ErrInvalidUbigeo:        {Status: http.StatusBadRequest, Message: "The ubigeo must have 6 digits."},
+	ErrInvalidEmail:         {Status: http.StatusBadRequest, Message: "The email is not valid."},
+	ErrInvalidPhone:         {Status: http.StatusBadRequest, Message: "The phone is not valid."},
+	ErrInvalidLogo:          {Status: http.StatusBadRequest, Message: "The logo must be a file id."},
+	ErrFieldTooLong:         {Status: http.StatusBadRequest, Message: "A field is too long."},
 	ErrRUCTaken:             {Status: http.StatusConflict, Message: "A tenant with that RUC already exists."},
 	ErrTenantNotFound:       {Status: http.StatusNotFound, Message: "Tenant not found."},
 	ErrSystemNotFound:       {Status: http.StatusNotFound, Message: "System not found."},
@@ -51,13 +57,22 @@ type systemRefJSON struct {
 }
 
 type tenantJSON struct {
-	ID          string    `json:"id"`
-	RUC         string    `json:"ruc"`
-	LegalName   string    `json:"legal_name"`
-	TradeName   string    `json:"trade_name"`
-	DisplayName string    `json:"display_name"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string `json:"id"`
+	RUC         string `json:"ruc"`
+	LegalName   string `json:"legal_name"`
+	TradeName   string `json:"trade_name"`
+	DisplayName string `json:"display_name"`
+	Address     string `json:"address"`
+	Department  string `json:"department"`
+	Province    string `json:"province"`
+	District    string `json:"district"`
+	Ubigeo      string `json:"ubigeo"`
+	Phone       string `json:"phone"`
+	Email       string `json:"email"`
+	// LogoFileID is null while the company has no logo.
+	LogoFileID *string   `json:"logo_file_id"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
 	// Systems is never null: a tenant without systems has an empty list.
 	Systems []systemRefJSON `json:"systems"`
 }
@@ -69,8 +84,17 @@ func toJSON(t Tenant) tenantJSON {
 	}
 	return tenantJSON{
 		ID: t.ID, RUC: t.RUC, LegalName: t.LegalName, TradeName: t.TradeName,
-		DisplayName: t.DisplayName(), Status: t.Status, CreatedAt: t.CreatedAt, Systems: systems,
+		DisplayName: t.DisplayName(), Address: t.Address, Department: t.Department, Province: t.Province, District: t.District,
+		Ubigeo: t.Ubigeo, Phone: t.Phone, Email: t.Email, LogoFileID: logoPointer(t.LogoFileID),
+		Status: t.Status, CreatedAt: t.CreatedAt, Systems: systems,
 	}
+}
+
+func logoPointer(id string) *string {
+	if id == "" {
+		return nil
+	}
+	return &id
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +113,34 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, toJSON(t))
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LegalName  string `json:"legal_name"`
+		TradeName  string `json:"trade_name"`
+		Address    string `json:"address"`
+		Department string `json:"department"`
+		Province   string `json:"province"`
+		District   string `json:"district"`
+		Ubigeo     string `json:"ubigeo"`
+		Phone      string `json:"phone"`
+		Email      string `json:"email"`
+		LogoFileID string `json:"logo_file_id"`
+	}
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
+		return
+	}
+	t, err := h.svc.Update(r.Context(), r.PathValue("id"), UpdateInput{
+		LegalName: req.LegalName, TradeName: req.TradeName, Address: req.Address, Department: req.Department, Province: req.Province,
+		District: req.District, Ubigeo: req.Ubigeo, Phone: req.Phone, Email: req.Email, LogoFileID: req.LogoFileID,
+	})
+	if err != nil {
+		httpx.Fail(w, r, h.log, err, failures)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, toJSON(t))
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +195,15 @@ type serviceTenantJSON struct {
 	LegalName   string `json:"legal_name"`
 	TradeName   string `json:"trade_name"`
 	DisplayName string `json:"display_name"`
+	Address     string `json:"address"`
+	Department  string `json:"department"`
+	Province    string `json:"province"`
+	District    string `json:"district"`
+	Ubigeo      string `json:"ubigeo"`
+	Phone       string `json:"phone"`
+	Email       string `json:"email"`
+	// LogoFileID is null while the company has no logo.
+	LogoFileID *string `json:"logo_file_id"`
 }
 
 func (h *Handler) listForSystem(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +219,11 @@ func (h *Handler) listForSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]serviceTenantJSON, 0, len(ts))
 	for _, t := range ts {
-		out = append(out, serviceTenantJSON{ID: t.ID, RUC: t.RUC, LegalName: t.LegalName, TradeName: t.TradeName, DisplayName: t.DisplayName()})
+		out = append(out, serviceTenantJSON{
+			ID: t.ID, RUC: t.RUC, LegalName: t.LegalName, TradeName: t.TradeName, DisplayName: t.DisplayName(),
+			Address: t.Address, Department: t.Department, Province: t.Province, District: t.District,
+			Ubigeo: t.Ubigeo, Phone: t.Phone, Email: t.Email, LogoFileID: logoPointer(t.LogoFileID),
+		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }

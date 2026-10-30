@@ -3,6 +3,7 @@ package tenant
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -19,7 +20,7 @@ func (f *fakeRepo) Create(_ context.Context, t Tenant) (Tenant, error) {
 	if _, ok := f.byRUC[t.RUC]; ok {
 		return Tenant{}, ErrRUCTaken
 	}
-	t.ID = "id-" + t.RUC
+	t.ID = "00000000-0000-0000-0000-0" + t.RUC // 12 digits after the last dash: a valid UUID
 	f.byRUC[t.RUC] = t
 	return t, nil
 }
@@ -31,6 +32,17 @@ func (f *fakeRepo) GetByID(_ context.Context, id string) (Tenant, error) {
 		}
 	}
 	return Tenant{}, ErrTenantNotFound
+}
+
+func (f *fakeRepo) Update(_ context.Context, t Tenant) error {
+	for ruc, current := range f.byRUC {
+		if current.ID == t.ID {
+			t.RUC, t.Status = current.RUC, current.Status
+			f.byRUC[ruc] = t
+			return nil
+		}
+	}
+	return ErrTenantNotFound
 }
 
 func (f *fakeRepo) List(context.Context) ([]Tenant, error) { return nil, nil }
@@ -133,5 +145,54 @@ func TestListForSystemNeedsACode(t *testing.T) {
 	svc := NewService(newFakeRepo())
 	if _, err := svc.ListForSystem(context.Background(), ""); !errors.Is(err, ErrSystemNotFound) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestUpdateProfile(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo())
+	created, err := svc.Create(ctx, CreateInput{RUC: "20123456789", LegalName: "Acme SAC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := UpdateInput{
+		LegalName: "  Acme   SAC ", TradeName: "Acme", Address: "Av. Lima 123", Department: "Lima", Province: "Lima", District: "Miraflores",
+		Ubigeo: "150122", Phone: "+51 987 654 321", Email: "ventas@acme.pe", LogoFileID: "9f1c2a44-7a43-4b0b-8f27-5f0f3f1f2a10",
+	}
+	got, err := svc.Update(ctx, created.ID, full)
+	if err != nil || got.LegalName != "Acme SAC" || got.Ubigeo != "150122" || got.District != "Miraflores" || got.RUC != "20123456789" {
+		t.Fatalf("got %+v err %v", got, err)
+	}
+	// Everything but the legal name is optional: an empty profile clears the data.
+	got, err = svc.Update(ctx, created.ID, UpdateInput{LegalName: "Acme SAC"})
+	if err != nil || got.Address != "" || got.Ubigeo != "" || got.Email != "" || got.LogoFileID != "" {
+		t.Fatalf("got %+v err %v", got, err)
+	}
+
+	for name, tc := range map[string]struct {
+		change func(*UpdateInput)
+		want   error
+	}{
+		"no legal name": {func(in *UpdateInput) { in.LegalName = "  " }, ErrInvalidLegalName},
+		"short ubigeo":  {func(in *UpdateInput) { in.Ubigeo = "1501" }, ErrInvalidUbigeo},
+		"letter ubigeo": {func(in *UpdateInput) { in.Ubigeo = "15012X" }, ErrInvalidUbigeo},
+		"bad email":     {func(in *UpdateInput) { in.Email = "no-es-correo" }, ErrInvalidEmail},
+		"named email":   {func(in *UpdateInput) { in.Email = "Acme <a@acme.pe>" }, ErrInvalidEmail},
+		"bad phone":     {func(in *UpdateInput) { in.Phone = "call me" }, ErrInvalidPhone},
+		"long phone":    {func(in *UpdateInput) { in.Phone = "123456789012345678901" }, ErrInvalidPhone},
+		"bad logo":      {func(in *UpdateInput) { in.LogoFileID = "https://x/logo.png" }, ErrInvalidLogo},
+		"long address":  {func(in *UpdateInput) { in.Address = strings.Repeat("a", 256) }, ErrFieldTooLong},
+	} {
+		in := full
+		tc.change(&in)
+		if _, err := svc.Update(ctx, created.ID, in); !errors.Is(err, tc.want) {
+			t.Errorf("%s: got %v want %v", name, err, tc.want)
+		}
+	}
+	if _, err := svc.Update(ctx, "not-a-uuid", full); !errors.Is(err, ErrInvalidID) {
+		t.Errorf("got %v", err)
+	}
+	if _, err := svc.Update(ctx, missingID, full); !errors.Is(err, ErrTenantNotFound) {
+		t.Errorf("got %v", err)
 	}
 }

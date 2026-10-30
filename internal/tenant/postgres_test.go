@@ -190,3 +190,36 @@ func TestListForSystem(t *testing.T) {
 		t.Fatalf("unknown system: got %+v err %v", got, err)
 	}
 }
+
+func TestPostgresUpdateProfile(t *testing.T) {
+	ctx := context.Background()
+	repo := NewPostgresRepository(platform.NewTestPool(t))
+	created, err := repo.Create(ctx, Tenant{RUC: "20123456789", LegalName: "Acme SAC", Status: StatusActive})
+	if err != nil || created.Address != "" || created.LogoFileID != "" {
+		t.Fatalf("a new tenant has an empty profile, got %+v err %v", created, err)
+	}
+	created.TradeName, created.Address, created.Department, created.Province, created.District = "Acme", "Av. Lima 123", "Lima", "Lima", "Miraflores"
+	created.Ubigeo, created.Phone, created.Email, created.LogoFileID = "150122", "987654321", "a@acme.pe", "9f1c2a44-7a43-4b0b-8f27-5f0f3f1f2a10"
+	if err = repo.Update(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetByID(ctx, created.ID)
+	if err != nil || got.District != "Miraflores" || got.Ubigeo != "150122" || got.LogoFileID != created.LogoFileID || got.RUC != "20123456789" {
+		t.Fatalf("got %+v err %v", got, err)
+	}
+	got.LogoFileID = ""
+	if err = repo.Update(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if cleared, _ := repo.GetByID(ctx, created.ID); cleared.LogoFileID != "" {
+		t.Fatalf("logo not cleared: %+v", cleared)
+	}
+	got.ID = missingID
+	if err = repo.Update(ctx, got); !errors.Is(err, ErrTenantNotFound) {
+		t.Fatalf("got %v", err)
+	}
+	got.ID, got.Ubigeo = created.ID, "12"
+	if err = repo.Update(ctx, got); err == nil {
+		t.Fatal("the database must reject a malformed ubigeo")
+	}
+}

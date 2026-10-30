@@ -11,7 +11,10 @@ const (
 	StatusDisabled = "disabled"
 )
 
-var rucPattern = regexp.MustCompile(`^[0-9]{11}$`)
+var (
+	rucPattern    = regexp.MustCompile(`^[0-9]{11}$`)
+	ubigeoPattern = regexp.MustCompile(`^[0-9]{6}$`)
+)
 
 // SystemRef identifies a system a tenant has contracted.
 type SystemRef struct {
@@ -26,9 +29,20 @@ type Tenant struct {
 	RUC       string
 	LegalName string
 	TradeName string
-	Status    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// Profile, all optional ("" means not set). Edited from the console; systems read it from here.
+	Address    string
+	Department string
+	Province   string
+	District   string
+	// Ubigeo is the 6-digit INEI code of the district, which SUNAT requires on dispatch guides.
+	Ubigeo string
+	Phone  string
+	Email  string
+	// LogoFileID is the id of the logo in atm-storage-api, or "" when there is none.
+	LogoFileID string
+	Status     string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 	// Systems are the systems enabled for the tenant, ordered by code. Filled by GetByID and List.
 	Systems []SystemRef
 }
@@ -42,5 +56,7 @@ func (t Tenant) DisplayName() string {
 }
 
 func validRUC(ruc string) bool { return rucPattern.MatchString(ruc) }
+
+func validUbigeo(ubigeo string) bool { return ubigeoPattern.MatchString(ubigeo) }
 
 func normalizeName(name string) string { return strings.Join(strings.Fields(name), " ") }

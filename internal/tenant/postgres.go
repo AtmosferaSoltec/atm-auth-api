@@ -24,11 +24,11 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const columns = "id, ruc, legal_name, trade_name, status, created_at, updated_at"
+const columns = "id, ruc, legal_name, trade_name, address, department, province, district, ubigeo, phone, email, coalesce(logo_file_id::text, ''), status, created_at, updated_at"
 
 func scan(row pgx.Row) (Tenant, error) {
 	var t Tenant
-	err := row.Scan(&t.ID, &t.RUC, &t.LegalName, &t.TradeName, &t.Status, &t.CreatedAt, &t.UpdatedAt)
+	err := row.Scan(&t.ID, &t.RUC, &t.LegalName, &t.TradeName, &t.Address, &t.Department, &t.Province, &t.District, &t.Ubigeo, &t.Phone, &t.Email, &t.LogoFileID, &t.Status, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
@@ -44,6 +44,21 @@ func (r *PostgresRepository) Create(ctx context.Context, t Tenant) (Tenant, erro
 		return Tenant{}, fmt.Errorf("insert tenant: %w", err)
 	}
 	return created, nil
+}
+
+func (r *PostgresRepository) Update(ctx context.Context, t Tenant) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE tenants SET legal_name = $2, trade_name = $3, address = $4, department = $5, province = $6, district = $7,
+		        ubigeo = $8, phone = $9, email = $10, logo_file_id = NULLIF($11, '')::uuid, updated_at = now()
+		  WHERE id = $1`,
+		t.ID, t.LegalName, t.TradeName, t.Address, t.Department, t.Province, t.District, t.Ubigeo, t.Phone, t.Email, t.LogoFileID)
+	if err != nil {
+		return fmt.Errorf("update tenant: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTenantNotFound
+	}
+	return nil
 }
 
 func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Tenant, error) {

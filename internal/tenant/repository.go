@@ -7,6 +7,8 @@ type Repository interface {
 	Create(ctx context.Context, t Tenant) (Tenant, error)
 	// GetByID returns ErrTenantNotFound when there is no match.
 	GetByID(ctx context.Context, id string) (Tenant, error)
+	// Update replaces the editable fields (everything but the RUC and the status). It returns ErrTenantNotFound.
+	Update(ctx context.Context, t Tenant) error
 	List(ctx context.Context) ([]Tenant, error)
 	// ListForSystem returns the active tenants that have the system enabled, ordered by legal name. A disabled
 	// system, tenant or enablement leaves a tenant out.

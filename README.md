@@ -66,6 +66,7 @@ go run ./cmd/api
 | DELETE | `/systems/{id}?confirm={code}` | Delete a system for good, with its tenant enablements, accesses and sessions. `confirm` must equal the system code or it answers `400 code_mismatch` |
 | POST, GET | `/tenants` | Create and list tenants (RUC, legal name, trade name) |
 | GET | `/tenants/{id}` | One tenant. Tenants (here and in the list) carry `systems`: the systems enabled for them |
+| PUT | `/tenants/{id}` | Edit the company profile. Body (all fields are sent; an empty one is cleared, only `legal_name` is required): `{legal_name, trade_name, address, department, province, district, ubigeo, phone, email, logo_file_id}`. `ubigeo` is 6 digits, `logo_file_id` the id of the logo in atm-storage-api (never a URL). The RUC cannot change. Systems read this data instead of keeping their own copy |
 | POST | `/tenants/{id}/systems` | Enable a system for a tenant. Body: `{"system_id"}` |
 | DELETE | `/tenants/{id}/systems/{system_id}` | Disable a system for a tenant. Removes the access its users had in that system (accounts stay) |
 | POST, GET | `/users` | Create and list users. Body: `{dni, full_name}`. The DNI is always the initial password and must be changed at first login; a `password` field is rejected |
@@ -87,7 +88,7 @@ For a system's own backend, with the token from `POST /v1/token`. The system is 
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/tenants` | The customers of the system: active tenants that have it enabled. Each is `{id, ruc, legal_name, trade_name, display_name}`; the list never says what other systems a customer uses |
+| GET | `/tenants` | The customers of the system: active tenants that have it enabled. Each is `{id, ruc, legal_name, trade_name, display_name, address, department, province, district, ubigeo, phone, email, logo_file_id}` (profile fields are empty strings, and `logo_file_id` null, when not set); the list never says what other systems a customer uses |
 
 ### Tenant owner API (`/v1/tenant/members`, requires a user token with `manage_users`)
 
