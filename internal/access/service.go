@@ -23,8 +23,8 @@ type AssignInput struct {
 	ManageUsers bool
 }
 
-// Assign lets a user enter a system inside a tenant. A user can be in only one tenant per system:
-// to move them, Remove the old access first.
+// Assign lets a user enter a system inside a tenant. A user can work for several tenants in the same
+// system, once each.
 func (s *Service) Assign(ctx context.Context, in AssignInput) (Access, error) {
 	if !platform.IsUUID(in.UserID) || !platform.IsUUID(in.SystemID) || !platform.IsUUID(in.TenantID) {
 		return Access{}, ErrInvalidID
@@ -50,9 +50,24 @@ func (s *Service) Remove(ctx context.Context, userID, systemID string) error {
 	return nil
 }
 
-// Resolve returns the user's current grant for a system, or ErrNoAccess.
-func (s *Service) Resolve(ctx context.Context, userID, systemCode string) (Grant, error) {
-	g, err := s.repo.Resolve(ctx, userID, systemCode)
+// RemoveByID removes one access.
+func (s *Service) RemoveByID(ctx context.Context, id string) error {
+	if !platform.IsUUID(id) {
+		return ErrInvalidID
+	}
+	if err := s.repo.RemoveByID(ctx, id); err != nil {
+		return fmt.Errorf("remove access: %w", err)
+	}
+	return nil
+}
+
+// Resolve returns the user's grant for a system, or ErrNoAccess. An empty tenantID picks the company the
+// user used last, or else the first one they were given.
+func (s *Service) Resolve(ctx context.Context, userID, systemCode, tenantID string) (Grant, error) {
+	if tenantID != "" && !platform.IsUUID(tenantID) {
+		return Grant{}, ErrNoAccess
+	}
+	g, err := s.repo.Resolve(ctx, userID, systemCode, tenantID)
 	if err != nil {
 		return Grant{}, fmt.Errorf("resolve access: %w", err)
 	}
@@ -81,4 +96,21 @@ func (s *Service) ListBySystem(ctx context.Context, systemID string) ([]Detail, 
 		return nil, fmt.Errorf("list system access: %w", err)
 	}
 	return out, nil
+}
+
+// Options returns the companies the user can work for in a system.
+func (s *Service) Options(ctx context.Context, userID, systemCode string) ([]Option, error) {
+	out, err := s.repo.Options(ctx, userID, systemCode)
+	if err != nil {
+		return nil, fmt.Errorf("list access options: %w", err)
+	}
+	return out, nil
+}
+
+// MarkUsed records which company the user worked for, so the next login enters it.
+func (s *Service) MarkUsed(ctx context.Context, userID, systemID, tenantID string) error {
+	if err := s.repo.MarkUsed(ctx, userID, systemID, tenantID); err != nil {
+		return fmt.Errorf("mark access used: %w", err)
+	}
+	return nil
 }

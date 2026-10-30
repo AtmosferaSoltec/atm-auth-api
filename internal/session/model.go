@@ -21,9 +21,11 @@ type RefreshToken struct {
 	UserID     string
 	SystemID   string
 	SystemCode string
-	ExpiresAt  time.Time
-	UsedAt     *time.Time
-	RevokedAt  *time.Time
+	// TenantID is the company the session works for ("" for the superadmin). A refresh keeps it.
+	TenantID  string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	RevokedAt *time.Time
 }
 
 // Tokens is the result of a successful login or refresh.

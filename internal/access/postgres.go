@@ -34,6 +34,7 @@ func (r *PostgresRepository) Assign(ctx context.Context, a Access) (Access, erro
 	if errors.As(err, &pgErr) {
 		switch {
 		case pgErr.Code == uniqueViolation:
+			// The same person in the same company of the same system twice.
 			return Access{}, ErrUserAlreadyInSystem
 		case pgErr.Code == foreignKeyViolation && pgErr.ConstraintName == "access_user_fk":
 			return Access{}, ErrUserNotFound
@@ -57,7 +58,55 @@ func (r *PostgresRepository) Remove(ctx context.Context, userID, systemID string
 	return nil
 }
 
-func (r *PostgresRepository) Resolve(ctx context.Context, userID, systemCode string) (Grant, error) {
+func (r *PostgresRepository) RemoveByID(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM access WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete access: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrAccessNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) Options(ctx context.Context, userID, systemCode string) ([]Option, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT t.id, t.ruc, COALESCE(NULLIF(t.trade_name, ''), t.legal_name), a.role
+		FROM access a
+		JOIN systems s         ON s.id = a.system_id
+		JOIN tenants t         ON t.id = a.tenant_id
+		JOIN tenant_systems ts ON ts.tenant_id = a.tenant_id AND ts.system_id = a.system_id
+		WHERE a.user_id = $1 AND s.code = $2
+		  AND s.status = 'active' AND t.status = 'active' AND ts.status = 'active'
+		ORDER BY COALESCE(NULLIF(t.trade_name, ''), t.legal_name), t.id`, userID, systemCode)
+	if err != nil {
+		return nil, fmt.Errorf("select access options: %w", err)
+	}
+	defer rows.Close()
+	var out []Option
+	for rows.Next() {
+		var o Option
+		if err := rows.Scan(&o.TenantID, &o.RUC, &o.Name, &o.Role); err != nil {
+			return nil, fmt.Errorf("scan access option: %w", err)
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate access options: %w", err)
+	}
+	return out, nil
+}
+
+func (r *PostgresRepository) MarkUsed(ctx context.Context, userID, systemID, tenantID string) error {
+	if _, err := r.pool.Exec(ctx,
+		`UPDATE access SET last_used_at = now() WHERE user_id = $1 AND system_id = $2 AND tenant_id = $3`,
+		userID, systemID, tenantID); err != nil {
+		return fmt.Errorf("mark access used: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresRepository) Resolve(ctx context.Context, userID, systemCode, tenantID string) (Grant, error) {
 	var g Grant
 	err := r.pool.QueryRow(ctx, `
 		SELECT a.system_id, s.code, a.tenant_id, a.role, a.manage_users, s.session_mode, t.ruc, u.dni, u.full_name
@@ -67,8 +116,11 @@ func (r *PostgresRepository) Resolve(ctx context.Context, userID, systemCode str
 		JOIN tenants t        ON t.id = a.tenant_id
 		JOIN tenant_systems ts ON ts.tenant_id = a.tenant_id AND ts.system_id = a.system_id
 		WHERE a.user_id = $1 AND s.code = $2
-		  AND s.status = 'active' AND t.status = 'active' AND ts.status = 'active'`,
-		userID, systemCode).Scan(&g.SystemID, &g.SystemCode, &g.TenantID, &g.Role, &g.ManageUsers, &g.SessionMode, &g.TenantRUC, &g.UserDNI, &g.UserName)
+		  AND ($3 = '' OR a.tenant_id::text = $3)
+		  AND s.status = 'active' AND t.status = 'active' AND ts.status = 'active'
+		ORDER BY a.last_used_at DESC NULLS LAST, a.created_at, a.id
+		LIMIT 1`,
+		userID, systemCode, tenantID).Scan(&g.SystemID, &g.SystemCode, &g.TenantID, &g.Role, &g.ManageUsers, &g.SessionMode, &g.TenantRUC, &g.UserDNI, &g.UserName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Grant{}, ErrNoAccess
 	}

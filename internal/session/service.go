@@ -33,8 +33,13 @@ type UserFinder interface {
 }
 
 type AccessResolver interface {
-	// Resolve returns access.ErrNoAccess when the user cannot enter the system.
-	Resolve(ctx context.Context, userID, systemCode string) (access.Grant, error)
+	// Resolve returns access.ErrNoAccess when the user cannot enter the system (or the company asked for).
+	// An empty tenantID picks the company used last, or else the first one the user was given.
+	Resolve(ctx context.Context, userID, systemCode, tenantID string) (access.Grant, error)
+	// Options lists the companies the user can work for in the system.
+	Options(ctx context.Context, userID, systemCode string) ([]access.Option, error)
+	// MarkUsed records the company the user works for, so the next login enters it.
+	MarkUsed(ctx context.Context, userID, systemID, tenantID string) error
 }
 
 // ClientVerifier checks the secret a system's backend presents.
@@ -116,8 +121,10 @@ func (s *Service) AdminLogin(ctx context.Context, dni, password, ip string) (Tok
 }
 
 // UserLogin authenticates a user for one system and resolves the tenant and role they have there.
+// tenantID is optional: without it the user enters the company they used last (or else the first one they
+// were given) and can switch afterwards with Refresh.
 // Failed password checks are throttled; a correct password without access is not.
-func (s *Service) UserLogin(ctx context.Context, dni, password, systemCode, ip string) (Tokens, error) {
+func (s *Service) UserLogin(ctx context.Context, dni, password, systemCode, tenantID, ip string) (Tokens, error) {
 	subjectKey, ipKey := "dni:"+dni, "ip:"+ip
 	if err := s.checkLimits(ctx, subjectKey, ipKey); err != nil {
 		return Tokens{}, err
@@ -150,12 +157,15 @@ func (s *Service) UserLogin(ctx context.Context, dni, password, systemCode, ip s
 		return Tokens{}, ErrPasswordChangeRequired
 	}
 
-	grant, err := s.deps.Access.Resolve(ctx, u.ID, systemCode)
+	grant, err := s.deps.Access.Resolve(ctx, u.ID, systemCode, tenantID)
 	if err != nil {
 		return Tokens{}, err
 	}
 	tokens, err := s.issue(ctx, userTemplate(u.ID, "", grant), &grant)
 	if err != nil {
+		return Tokens{}, fmt.Errorf("user login: %w", err)
+	}
+	if err := s.deps.Access.MarkUsed(ctx, u.ID, grant.SystemID, grant.TenantID); err != nil {
 		return Tokens{}, fmt.Errorf("user login: %w", err)
 	}
 	return tokens, nil
@@ -215,7 +225,12 @@ func (s *Service) RevokeUserSessions(ctx context.Context, userID string) error {
 
 // Refresh rotates a refresh token. Presenting an already used token revokes its whole family.
 // For users the account and access are checked again, so removing access ends the session.
-func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
+//
+// tenantID is optional. Empty keeps the session in its company. A different one switches the session to
+// that company, if the user works for it in the system: the old token is spent and the new one carries
+// the new company. A company the user cannot enter is refused (access.ErrNoAccess) without ending the
+// session they have.
+func (s *Service) Refresh(ctx context.Context, raw, tenantID string) (Tokens, error) {
 	old, err := s.deps.Tokens.FindByHash(ctx, hashToken(raw))
 	if err != nil {
 		return Tokens{}, err
@@ -233,8 +248,13 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 
 	tmpl := RefreshToken{FamilyID: old.FamilyID, Role: old.Role}
 	var grant *access.Grant
+	switching := false
 	if old.Role == RoleUser {
-		g, err := s.currentGrant(ctx, old)
+		want := old.TenantID
+		if tenantID != "" && tenantID != old.TenantID {
+			want, switching = tenantID, true
+		}
+		g, err := s.currentGrant(ctx, old, want, switching)
 		if err != nil {
 			return Tokens{}, err
 		}
@@ -253,11 +273,28 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 	if err != nil {
 		return Tokens{}, fmt.Errorf("refresh: %w", err)
 	}
+	if switching {
+		// The company the user chose becomes the one login enters next time.
+		if err := s.deps.Access.MarkUsed(ctx, old.UserID, grant.SystemID, grant.TenantID); err != nil {
+			return Tokens{}, fmt.Errorf("refresh: %w", err)
+		}
+	}
 	return tokens, nil
 }
 
-// currentGrant re-checks a user's account and access. If either is gone the whole session is revoked.
-func (s *Service) currentGrant(ctx context.Context, old RefreshToken) (access.Grant, error) {
+// Tenants lists the companies a user can work for in a system, and which one the token is on.
+func (s *Service) Tenants(ctx context.Context, userID, systemCode string) ([]access.Option, error) {
+	options, err := s.deps.Access.Options(ctx, userID, systemCode)
+	if err != nil {
+		return nil, fmt.Errorf("list tenants: %w", err)
+	}
+	return options, nil
+}
+
+// currentGrant re-checks a user's account and access for the company the session works for (want). If the
+// account or that access is gone the whole session is revoked, unless the user is only trying to switch to
+// a company they cannot enter: then the switch is refused and the session they have stays as it is.
+func (s *Service) currentGrant(ctx context.Context, old RefreshToken, want string, switching bool) (access.Grant, error) {
 	deny := func() (access.Grant, error) {
 		if err := s.deps.Tokens.RevokeFamily(ctx, old.FamilyID, s.now()); err != nil {
 			return access.Grant{}, fmt.Errorf("refresh: revoke family: %w", err)
@@ -274,8 +311,11 @@ func (s *Service) currentGrant(ctx context.Context, old RefreshToken) (access.Gr
 	if u.Status != user.StatusActive || u.MustChangePassword {
 		return deny()
 	}
-	g, err := s.deps.Access.Resolve(ctx, old.UserID, old.SystemCode)
+	g, err := s.deps.Access.Resolve(ctx, old.UserID, old.SystemCode, want)
 	if errors.Is(err, access.ErrNoAccess) {
+		if switching {
+			return access.Grant{}, access.ErrNoAccess
+		}
 		return deny()
 	}
 	if err != nil {
@@ -287,7 +327,7 @@ func (s *Service) currentGrant(ctx context.Context, old RefreshToken) (access.Gr
 func userTemplate(userID, familyID string, g access.Grant) RefreshToken {
 	return RefreshToken{
 		FamilyID: familyID, Role: RoleUser,
-		UserID: userID, SystemID: g.SystemID, SystemCode: g.SystemCode,
+		UserID: userID, SystemID: g.SystemID, SystemCode: g.SystemCode, TenantID: g.TenantID,
 	}
 }
 

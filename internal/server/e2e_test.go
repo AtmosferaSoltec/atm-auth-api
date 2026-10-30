@@ -772,3 +772,150 @@ func adminToken(t *testing.T, h http.Handler) string {
 	decode(t, rec, &tok)
 	return tok.AccessToken
 }
+
+// A person who owns two companies in the same system enters the one they used last, switches without a
+// password, and manages the members of the company they are working for, never of the other.
+func TestOwnerOfTwoCompanies(t *testing.T) {
+	ctx := context.Background()
+	e := newE2EFull(t)
+	h := e.handler
+
+	owner, _ := e.users.Create(ctx, user.CreateInput{DNI: "11111111", FullName: "Percy Dueño", Password: "owner-password"})
+	acmeStaff, _ := e.users.Create(ctx, user.CreateInput{DNI: "22222222", FullName: "Staff Acme", Password: "staff-password"})
+	globexStaff, _ := e.users.Create(ctx, user.CreateInput{DNI: "33333333", FullName: "Staff Globex", Password: "staff-password"})
+	olympus, _ := e.systems.Create(ctx, system.CreateInput{Code: "olympus", Name: "Olympus"})
+	if _, err := e.roles.Create(ctx, role.CreateInput{SystemID: olympus.ID, Name: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.roles.Create(ctx, role.CreateInput{SystemID: olympus.ID, Name: "cajero"}); err != nil {
+		t.Fatal(err)
+	}
+	acme, _ := e.tenants.Create(ctx, tenant.CreateInput{RUC: "20123456789", LegalName: "Acme SAC", TradeName: "Acme"})
+	globex, _ := e.tenants.Create(ctx, tenant.CreateInput{RUC: "20987654321", LegalName: "Globex SAC", TradeName: "Globex"})
+	for _, tn := range []string{acme.ID, globex.ID} {
+		if err := e.tenants.EnableSystem(ctx, tn, olympus.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assign := func(userID, tenantID, role string, manage bool) {
+		t.Helper()
+		if _, err := e.access.Assign(ctx, access.AssignInput{UserID: userID, SystemID: olympus.ID, TenantID: tenantID, Role: role, ManageUsers: manage}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assign(owner.ID, acme.ID, "admin", true)
+	assign(owner.ID, globex.ID, "admin", true)
+	assign(acmeStaff.ID, acme.ID, "cajero", false)
+	assign(globexStaff.ID, globex.ID, "cajero", false)
+
+	type tokens struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	login := func(body map[string]string) (*httptest.ResponseRecorder, tokens) {
+		t.Helper()
+		body["dni"], body["password"], body["system"] = "11111111", "owner-password", "olympus"
+		rec := call(h, "POST", "/v1/login", "", body)
+		var tok tokens
+		_ = json.Unmarshal(rec.Body.Bytes(), &tok)
+		return rec, tok
+	}
+	memberIDs := func(accessToken string) []string {
+		t.Helper()
+		rec := call(h, "GET", "/v1/tenant/members", accessToken, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("members: %d %s", rec.Code, rec.Body)
+		}
+		var body struct {
+			Items []struct {
+				UserID string `json:"user_id"`
+			} `json:"items"`
+		}
+		decode(t, rec, &body)
+		ids := make([]string, 0, len(body.Items))
+		for _, m := range body.Items {
+			ids = append(ids, m.UserID)
+		}
+		return ids
+	}
+
+	// Never used any company: the first one they were given.
+	rec, tok := login(map[string]string{})
+	if rec.Code != http.StatusOK || claimsOf(t, tok.AccessToken).Tenant != acme.ID {
+		t.Fatalf("first login: %d %s", rec.Code, rec.Body)
+	}
+
+	// The selector lists both and marks the one the token is on.
+	list := call(h, "GET", "/v1/session/tenants", tok.AccessToken, nil)
+	var options struct {
+		Items []struct {
+			TenantID string `json:"tenant_id"`
+			Name     string `json:"name"`
+			Current  bool   `json:"current"`
+		} `json:"items"`
+	}
+	decode(t, list, &options)
+	if list.Code != http.StatusOK || len(options.Items) != 2 || options.Items[0].Name != "Acme" || !options.Items[0].Current ||
+		options.Items[1].Name != "Globex" || options.Items[1].Current {
+		t.Fatalf("tenants: %d %s", list.Code, list.Body)
+	}
+	if rec := call(h, "GET", "/v1/session/tenants", "", nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no token: %d", rec.Code)
+	}
+
+	// Members are those of the company of the token.
+	if ids := memberIDs(tok.AccessToken); !contains(ids, acmeStaff.ID) || contains(ids, globexStaff.ID) {
+		t.Fatalf("acme members: %v", ids)
+	}
+
+	// Switching: same session, new company, no password.
+	rec = call(h, "POST", "/v1/refresh", "", map[string]string{"refresh_token": tok.RefreshToken, "tenant_id": globex.ID})
+	_ = json.Unmarshal(rec.Body.Bytes(), &tok)
+	if rec.Code != http.StatusOK || claimsOf(t, tok.AccessToken).Tenant != globex.ID {
+		t.Fatalf("switch: %d %s", rec.Code, rec.Body)
+	}
+	if ids := memberIDs(tok.AccessToken); !contains(ids, globexStaff.ID) || contains(ids, acmeStaff.ID) {
+		t.Fatalf("globex members: %v", ids)
+	}
+
+	// A plain refresh keeps the company.
+	rec = call(h, "POST", "/v1/refresh", "", map[string]string{"refresh_token": tok.RefreshToken})
+	_ = json.Unmarshal(rec.Body.Bytes(), &tok)
+	if rec.Code != http.StatusOK || claimsOf(t, tok.AccessToken).Tenant != globex.ID {
+		t.Fatalf("refresh: %d %s", rec.Code, rec.Body)
+	}
+
+	// A company the person does not work for is refused, and their session survives.
+	stranger, _ := e.tenants.Create(ctx, tenant.CreateInput{RUC: "20555555555", LegalName: "Stranger SAC"})
+	rec = call(h, "POST", "/v1/refresh", "", map[string]string{"refresh_token": tok.RefreshToken, "tenant_id": stranger.ID})
+	if rec.Code != http.StatusForbidden || !bytes.Contains(rec.Body.Bytes(), []byte("no_access")) {
+		t.Fatalf("switch to a stranger company: %d %s", rec.Code, rec.Body)
+	}
+	if rec = call(h, "POST", "/v1/refresh", "", map[string]string{"refresh_token": tok.RefreshToken}); rec.Code != http.StatusOK {
+		t.Fatalf("the refused switch ended the session: %d", rec.Code)
+	}
+
+	// The next login enters the company they used last.
+	if rec, next := login(map[string]string{}); rec.Code != http.StatusOK || claimsOf(t, next.AccessToken).Tenant != globex.ID {
+		t.Fatalf("login after switching: %d %s", rec.Code, rec.Body)
+	}
+	// And a company can be asked for at login.
+	if rec, next := login(map[string]string{"tenant_id": acme.ID}); rec.Code != http.StatusOK || claimsOf(t, next.AccessToken).Tenant != acme.ID {
+		t.Fatalf("login with a company: %d %s", rec.Code, rec.Body)
+	}
+
+	// An owner cannot pull another company's staff into theirs.
+	rec = call(h, "POST", "/v1/tenant/members", tok.AccessToken, map[string]string{"dni": "22222222", "full_name": "Staff Acme", "role": "cajero"})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("adding another company's staff: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func contains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}

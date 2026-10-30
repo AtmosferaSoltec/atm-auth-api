@@ -63,3 +63,13 @@ func normalizeRole(role string) (string, bool) {
 	}
 	return role, true
 }
+
+// Option is a company a person can work for in a system.
+type Option struct {
+	TenantID string
+	RUC      string
+	// Name is the trade name, or the legal name when there is none.
+	Name string
+	// Role is what the person is in that company.
+	Role string
+}

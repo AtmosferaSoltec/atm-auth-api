@@ -48,6 +48,7 @@ func New(log *slog.Logger, d Deps) http.Handler {
 	mux.HandleFunc("GET /ready", ready(d.DB))
 	mux.HandleFunc("GET /.well-known/jwks.json", jwks(d.JWKS))
 	d.Session.Register(mux)
+	d.Session.RegisterAuthenticated(mux, httpx.Middleware(auth.RequireRole(d.Verifier, session.RoleUser)))
 	d.Members.Register(mux)
 
 	requireAdmin := httpx.Middleware(auth.RequireRole(d.Verifier, session.RoleSuperadmin))

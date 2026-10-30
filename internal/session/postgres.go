@@ -20,10 +20,11 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 
 func (r *PostgresRepository) Create(ctx context.Context, t RefreshToken) (RefreshToken, error) {
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO refresh_tokens (family_id, token_hash, role, user_id, system_id, expires_at)
-		VALUES (COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, $6)
+		INSERT INTO refresh_tokens (family_id, token_hash, role, user_id, system_id, tenant_id, expires_at)
+		VALUES (COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid,
+		        NULLIF($6, '')::uuid, $7)
 		RETURNING id, family_id`,
-		t.FamilyID, t.TokenHash, t.Role, t.UserID, t.SystemID, t.ExpiresAt,
+		t.FamilyID, t.TokenHash, t.Role, t.UserID, t.SystemID, t.TenantID, t.ExpiresAt,
 	).Scan(&t.ID, &t.FamilyID)
 	if err != nil {
 		return RefreshToken{}, fmt.Errorf("insert refresh token: %w", err)
@@ -36,12 +37,12 @@ func (r *PostgresRepository) FindByHash(ctx context.Context, hash string) (Refre
 	err := r.pool.QueryRow(ctx, `
 		SELECT rt.id, rt.family_id, rt.token_hash, rt.role,
 		       COALESCE(rt.user_id::text, ''), COALESCE(rt.system_id::text, ''), COALESCE(s.code, ''),
-		       rt.expires_at, rt.used_at, rt.revoked_at
+		       COALESCE(rt.tenant_id::text, ''), rt.expires_at, rt.used_at, rt.revoked_at
 		FROM refresh_tokens rt
 		LEFT JOIN systems s ON s.id = rt.system_id
 		WHERE rt.token_hash = $1`, hash,
 	).Scan(&t.ID, &t.FamilyID, &t.TokenHash, &t.Role, &t.UserID, &t.SystemID, &t.SystemCode,
-		&t.ExpiresAt, &t.UsedAt, &t.RevokedAt)
+		&t.TenantID, &t.ExpiresAt, &t.UsedAt, &t.RevokedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RefreshToken{}, ErrInvalidRefreshToken
 	}

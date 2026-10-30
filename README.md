@@ -47,11 +47,12 @@ go run ./cmd/api
 | GET | `/health` | Liveness |
 | GET | `/ready` | Readiness (checks the database) |
 | GET | `/.well-known/jwks.json` | Public key (JWKS) other services use to validate access tokens |
-| POST | `/v1/login` | User login. Body: `{"dni", "password", "system"}`. The token carries `system`, `tenant` and `app_role`, plus `name`, `dni` and `tenant_ruc` so the system can link or create its own record of the person and the company. The response also says `session_mode` and `refresh_expires_in` (seconds), so the client knows whether to remember the session. `403 no_access` if the user cannot enter that system |
+| POST | `/v1/login` | User login. Body: `{"dni", "password", "system"}`, plus an optional `tenant_id` to enter a specific company. Without it the person enters the company they used last, or else the first one they were given. The token carries `system`, `tenant` and `app_role`, plus `name`, `dni` and `tenant_ruc` so the system can link or create its own record of the person and the company. The response also says `session_mode` and `refresh_expires_in` (seconds), so the client knows whether to remember the session. `403 no_access` if the user cannot enter that system |
 | POST | `/v1/token` | Service token for a system's backend. Body: `{"client_id": <system code>, "client_secret"}`. Returns a short-lived `access_token` (role `service`, subject `system:<code>`) with no refresh token; the backend asks again when it expires. One secret per system works on every microservice, which only verify the token with the JWKS. Throttled like logins |
 | POST | `/v1/admin/login` | Superadmin login. Body: `{"dni", "password"}` |
 | POST | `/v1/password/change` | Body: `{"dni", "current_password", "new_password"}`. Ends all sessions; the user logs in again |
-| POST | `/v1/refresh` | Rotate a refresh token. Body: `{"refresh_token"}` |
+| POST | `/v1/refresh` | Rotate a refresh token. Body: `{"refresh_token"}`, plus an optional `tenant_id` to **switch the session to another company** the person works for in the system (no password needed; `403 no_access` if they do not, and their session stays). That company becomes the one login enters next time |
+| GET | `/v1/session/tenants` | The companies the signed-in person can work for in the system of their token: `{items: [{tenant_id, ruc, name, role, current}]}`. Clients show a selector when there is more than one |
 | POST | `/v1/logout` | Revoke the session. Body: `{"refresh_token"}` |
 | GET | `/v1/admin/me` | Returns the authenticated superadmin (requires bearer token) |
 
@@ -78,7 +79,8 @@ go run ./cmd/api
 | POST | `/access` | Give a user access: `{user_id, system_id, tenant_id, role, manage_users}`. `role` must be one of the system's roles (`400 unknown_role` otherwise) |
 | GET | `/users/{id}/access` | A user's accesses (with system and tenant names) |
 | GET | `/systems/{id}/access` | Who has access to a system: user, tenant and role |
-| DELETE | `/users/{id}/access/{system_id}` | Remove an access |
+| DELETE | `/access/{id}` | Remove one access (the `id` comes from the access lists), so a person with several companies in a system loses only that one |
+| DELETE | `/users/{id}/access/{system_id}` | Remove every access the user has in a system |
 
 `manage_users` marks the owner of a tenant in a system, who will be able to manage the members of their own tenant.
 
@@ -114,8 +116,8 @@ Presenting a refresh token that was already used revokes its whole session.
 
 - A **tenant** is a customer company (RUC, legal name, trade name). A **system** is a product (Olympus, Pulso...).
 - `tenant_systems`: which systems a tenant has contracted.
-- `access`: which user enters which system, in which tenant, with which role. `UNIQUE (user_id, system_id)`: a user is in
-  one tenant per system; to move them, remove the old access first. The same user can be in different tenants in different systems.
+- `access`: which user enters which system, in which tenant, with which role. `UNIQUE (user_id, system_id, tenant_id)`: a person can work for **several companies in the same system** (for example the owner of two businesses), once each. Only the superadmin gives a person a second company: an owner cannot add someone who already belongs to another company of the system (`409`).
+- The token always names **one** company (`tenant`). Login enters the company used last, or else the first one given; the person switches with `POST /v1/refresh` and a `tenant_id`, and each session remembers its company so a refresh keeps it. Systems keep reading `tenant` from the token and need no change. `/v1/tenant/members` acts on the company of the token.
 - Each system defines its own roles (a catalog per system). An access points at one of them, so a role cannot be mistyped and one in use cannot be deleted. In the token the role is still the name, as text (`app_role`): what each role allows is up to the system. Only `role` (`superadmin` or `user`) is used for authorization here.
 - Refreshing a user session re-checks the account and the access: removing access or disabling the user ends the session at the next refresh.
 

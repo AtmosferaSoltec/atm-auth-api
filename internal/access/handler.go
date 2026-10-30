@@ -21,6 +21,7 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 	mux.Handle("POST /v1/admin/access", admin(http.HandlerFunc(h.assign)))
 	mux.Handle("DELETE /v1/admin/users/{id}/access/{system_id}", admin(http.HandlerFunc(h.remove)))
+	mux.Handle("DELETE /v1/admin/access/{id}", admin(http.HandlerFunc(h.removeByID)))
 	mux.Handle("GET /v1/admin/users/{id}/access", admin(http.HandlerFunc(h.listByUser)))
 	mux.Handle("GET /v1/admin/systems/{id}/access", admin(http.HandlerFunc(h.listBySystem)))
 }
@@ -31,7 +32,7 @@ var failures = map[error]httpx.Failure{
 	ErrUnknownRole:         {Status: http.StatusBadRequest, Message: "The system has no such role. Create it in the system first."},
 	ErrUserNotFound:        {Status: http.StatusNotFound, Message: "User not found."},
 	ErrAccessNotFound:      {Status: http.StatusNotFound, Message: "The user has no access to that system."},
-	ErrUserAlreadyInSystem: {Status: http.StatusConflict, Message: "The user already has access to this system. Remove it first to move them to another tenant."},
+	ErrUserAlreadyInSystem: {Status: http.StatusConflict, Message: "The user already has access to this tenant in this system."},
 	ErrSystemNotEnabled:    {Status: http.StatusConflict, Message: "The tenant has not contracted this system."},
 }
 
@@ -77,6 +78,14 @@ func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.Remove(r.Context(), r.PathValue("id"), r.PathValue("system_id")); err != nil {
+		httpx.Fail(w, r, h.log, err, failures)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) removeByID(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.RemoveByID(r.Context(), r.PathValue("id")); err != nil {
 		httpx.Fail(w, r, h.log, err, failures)
 		return
 	}

@@ -109,7 +109,13 @@ func (f *fakeAccess) Assign(_ context.Context, in access.AssignInput) (access.Ac
 	f.assigned = append(f.assigned, in)
 	return access.Access{}, nil
 }
-func (f *fakeAccess) Resolve(_ context.Context, userID, _ string) (access.Grant, error) {
+func (f *fakeAccess) Options(_ context.Context, userID, _ string) ([]access.Option, error) {
+	if g, ok := f.grants[userID]; ok {
+		return []access.Option{{TenantID: g.TenantID}}, nil
+	}
+	return nil, nil
+}
+func (f *fakeAccess) Resolve(_ context.Context, userID, _, _ string) (access.Grant, error) {
 	if g, ok := f.grants[userID]; ok {
 		return g, nil
 	}
@@ -143,7 +149,7 @@ func TestAuthorize(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("owner gets the scope from the database grant", func(t *testing.T) {
-		sc, err := newFixture().svc.Authorize(ctx, owner, "olympus")
+		sc, err := newFixture().svc.Authorize(ctx, owner, "olympus", tenantID)
 		if err != nil || sc != scope {
 			t.Fatalf("got %+v err %v", sc, err)
 		}
@@ -169,7 +175,7 @@ func TestAuthorize(t *testing.T) {
 			if name == "regular member" {
 				who = cashier
 			}
-			if _, err := f.svc.Authorize(ctx, who, "olympus"); !errors.Is(err, ErrNotManager) {
+			if _, err := f.svc.Authorize(ctx, who, "olympus", tenantID); !errors.Is(err, ErrNotManager) {
 				t.Fatalf("got %v", err)
 			}
 		})
@@ -368,4 +374,36 @@ func TestReservedRole(t *testing.T) {
 			t.Fatalf("got %v", err)
 		}
 	})
+}
+
+// A person who owns two companies manages the members of the one their token works for, never the other's.
+func TestAuthorizeUsesTheCompanyOfTheToken(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture()
+	f.access.grants[owner] = access.Grant{SystemID: sysID, SystemCode: "olympus", TenantID: "other-tenant", ManageUsers: true}
+
+	// The resolver answers for the company asked for; the scope carries that company.
+	sc, err := f.svc.Authorize(ctx, owner, "olympus", "other-tenant")
+	if err != nil || sc.TenantID != "other-tenant" {
+		t.Fatalf("got %+v err %v", sc, err)
+	}
+	// A token without a company never manages anyone.
+	if _, err := f.svc.Authorize(ctx, owner, "olympus", ""); !errors.Is(err, ErrNotManager) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// Putting a customer's staff inside another customer's company is not something an owner can do.
+func TestAddRefusesSomeoneOfAnotherCompany(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture()
+	f.access.grants[other] = access.Grant{SystemID: sysID, SystemCode: "olympus", TenantID: "another-company"}
+
+	_, err := f.svc.Add(ctx, scope, AddInput{DNI: "55555555", Role: "cajero"})
+	if !errors.Is(err, access.ErrUserAlreadyInSystem) {
+		t.Fatalf("got %v", err)
+	}
+	if len(f.access.assigned) != 0 {
+		t.Fatalf("assigned %+v", f.access.assigned)
+	}
 }

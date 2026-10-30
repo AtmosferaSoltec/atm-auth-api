@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/auth"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/httpx"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/user"
 )
@@ -30,6 +31,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/logout", h.logout)
 }
 
+// RegisterAuthenticated mounts the routes of a signed-in user. user must reject any other token.
+func (h *Handler) RegisterAuthenticated(mux *http.ServeMux, user httpx.Middleware) {
+	mux.Handle("GET /v1/session/tenants", user(http.HandlerFunc(h.tenants)))
+}
+
 type loginRequest struct {
 	DNI      string `json:"dni"`
 	Password string `json:"password"`
@@ -39,6 +45,8 @@ type userLoginRequest struct {
 	DNI      string `json:"dni"`
 	Password string `json:"password"`
 	System   string `json:"system"`
+	// TenantID is optional: without it the user enters the company they used last.
+	TenantID string `json:"tenant_id"`
 }
 
 type changePasswordRequest struct {
@@ -49,6 +57,8 @@ type changePasswordRequest struct {
 
 type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
+	// TenantID is optional: a different company than the session's switches the session to it.
+	TenantID string `json:"tenant_id"`
 }
 
 type tokensResponse struct {
@@ -69,7 +79,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		invalidRequest(w)
 		return
 	}
-	tokens, err := h.svc.UserLogin(r.Context(), req.DNI, req.Password, req.System, httpx.ClientIP(r, h.clientIPHeader))
+	tokens, err := h.svc.UserLogin(r.Context(), req.DNI, req.Password, req.System, req.TenantID, httpx.ClientIP(r, h.clientIPHeader))
 	h.respondTokens(w, r, tokens, err)
 }
 
@@ -108,7 +118,7 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 		invalidRequest(w)
 		return
 	}
-	tokens, err := h.svc.Refresh(r.Context(), req.RefreshToken)
+	tokens, err := h.svc.Refresh(r.Context(), req.RefreshToken, req.TenantID)
 	h.respondTokens(w, r, tokens, err)
 }
 
@@ -140,7 +150,7 @@ func (h *Handler) respondTokens(w http.ResponseWriter, r *http.Request, tokens T
 	case errors.Is(err, ErrPasswordChangeRequired):
 		httpx.Error(w, http.StatusForbidden, "password_change_required", "You must set a new password before continuing.")
 	case errors.Is(err, access.ErrNoAccess):
-		httpx.Error(w, http.StatusForbidden, "no_access", "You do not have access to this system.")
+		httpx.Error(w, http.StatusForbidden, "no_access", "You do not have access to this system or company.")
 	case errors.Is(err, ErrInvalidRefreshToken):
 		httpx.Error(w, http.StatusUnauthorized, "invalid_refresh_token", "Invalid or expired refresh token.")
 	case errors.As(err, &tooMany):
@@ -150,6 +160,33 @@ func (h *Handler) respondTokens(w http.ResponseWriter, r *http.Request, tokens T
 	default:
 		h.internalError(w, r, err)
 	}
+}
+
+type tenantOptionJSON struct {
+	TenantID string `json:"tenant_id"`
+	RUC      string `json:"ruc"`
+	Name     string `json:"name"`
+	// Role is what the person is in that company (the app_role of their token there).
+	Role string `json:"role"`
+	// Current marks the company the token is working for.
+	Current bool `json:"current"`
+}
+
+// tenants lists the companies the signed-in person can work for in the system of their token. A client shows it
+// as a selector when there is more than one, and switches with POST /v1/refresh and a tenant_id.
+func (h *Handler) tenants(w http.ResponseWriter, r *http.Request) {
+	claims, _ := auth.ClaimsFromContext(r.Context())
+	options, err := h.svc.Tenants(r.Context(), claims.Subject, claims.System)
+	if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	items := make([]tenantOptionJSON, 0, len(options))
+	for _, o := range options {
+		items = append(items, tenantOptionJSON{TenantID: o.TenantID, RUC: o.RUC, Name: o.Name, Role: o.Role, Current: o.TenantID == claims.Tenant})
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func invalidRequest(w http.ResponseWriter) {

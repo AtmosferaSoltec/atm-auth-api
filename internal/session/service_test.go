@@ -142,14 +142,40 @@ func (f *fakeUsers) GetByID(_ context.Context, id string) (user.User, error) {
 	return user.User{}, user.ErrUserNotFound
 }
 
-// fakeAccess holds grants keyed by "userID|systemCode".
-type fakeAccess struct{ grants map[string]access.Grant }
+// fakeAccess holds the default grant of each user keyed by "userID|systemCode", and the grants for a
+// specific company keyed by "userID|systemCode|tenantID". used records the companies marked as used.
+type fakeAccess struct {
+	grants   map[string]access.Grant
+	byTenant map[string]access.Grant
+	options  map[string][]access.Option
+	used     []string
+}
 
-func (f *fakeAccess) Resolve(_ context.Context, userID, systemCode string) (access.Grant, error) {
-	if g, ok := f.grants[userID+"|"+systemCode]; ok {
+func (f *fakeAccess) Resolve(_ context.Context, userID, systemCode, tenantID string) (access.Grant, error) {
+	key := userID + "|" + systemCode
+	g, ok := f.grants[key]
+	if tenantID == "" {
+		if ok {
+			return g, nil
+		}
+		return access.Grant{}, access.ErrNoAccess
+	}
+	if specific, found := f.byTenant[key+"|"+tenantID]; found {
+		return specific, nil
+	}
+	if ok && g.TenantID == tenantID {
 		return g, nil
 	}
 	return access.Grant{}, access.ErrNoAccess
+}
+
+func (f *fakeAccess) Options(_ context.Context, userID, systemCode string) ([]access.Option, error) {
+	return f.options[userID+"|"+systemCode], nil
+}
+
+func (f *fakeAccess) MarkUsed(_ context.Context, userID, systemID, tenantID string) error {
+	f.used = append(f.used, userID+"|"+systemID+"|"+tenantID)
+	return nil
 }
 
 // fakeClients accepts the secrets it was given, keyed by system code.
@@ -299,7 +325,7 @@ func TestRefresh(t *testing.T) {
 	t.Run("rotates", func(t *testing.T) {
 		f := newFixture()
 		first := login(t, f)
-		second, err := f.svc.Refresh(ctx, first.RefreshToken)
+		second, err := f.svc.Refresh(ctx, first.RefreshToken, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -314,12 +340,12 @@ func TestRefresh(t *testing.T) {
 	t.Run("reuse revokes the whole family", func(t *testing.T) {
 		f := newFixture()
 		first := login(t, f)
-		second, _ := f.svc.Refresh(ctx, first.RefreshToken)
-		if _, err := f.svc.Refresh(ctx, first.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+		second, _ := f.svc.Refresh(ctx, first.RefreshToken, "")
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 			t.Fatalf("got %v", err)
 		}
 		// The legitimate newer token is now dead too.
-		if _, err := f.svc.Refresh(ctx, second.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+		if _, err := f.svc.Refresh(ctx, second.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -328,13 +354,13 @@ func TestRefresh(t *testing.T) {
 		f := newFixture()
 		first := login(t, f)
 		*f.now = f.now.Add(25 * time.Hour)
-		if _, err := f.svc.Refresh(ctx, first.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 			t.Fatalf("got %v", err)
 		}
 	})
 
 	t.Run("unknown", func(t *testing.T) {
-		if _, err := newFixture().svc.Refresh(ctx, "garbage"); !errors.Is(err, ErrInvalidRefreshToken) {
+		if _, err := newFixture().svc.Refresh(ctx, "garbage", ""); !errors.Is(err, ErrInvalidRefreshToken) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -344,12 +370,12 @@ func TestLogout(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture()
 	first := login(t, f)
-	second, _ := f.svc.Refresh(ctx, first.RefreshToken)
+	second, _ := f.svc.Refresh(ctx, first.RefreshToken, "")
 
 	if err := f.svc.Logout(ctx, second.RefreshToken); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.Refresh(ctx, second.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+	if _, err := f.svc.Refresh(ctx, second.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 		t.Fatalf("got %v", err)
 	}
 	if err := f.svc.Logout(ctx, "unknown"); err != nil {
@@ -362,7 +388,7 @@ func TestUserLogin(t *testing.T) {
 
 	t.Run("success puts tenant and app role in the token", func(t *testing.T) {
 		f := newFixture()
-		tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1")
+		tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -379,7 +405,7 @@ func TestUserLogin(t *testing.T) {
 	t.Run("an app role named superadmin never becomes the platform role", func(t *testing.T) {
 		f := newFixture()
 		f.access.grants["u1|olympus"] = access.Grant{SystemID: "s1", SystemCode: "olympus", TenantID: "t1", Role: "superadmin"}
-		if _, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1"); err != nil {
+		if _, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1"); err != nil {
 			t.Fatal(err)
 		}
 		if f.signer.last.Role != RoleUser || f.signer.last.AppRole != "superadmin" {
@@ -394,7 +420,7 @@ func TestUserLogin(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture()
-			_, err := f.svc.UserLogin(ctx, tc.dni, tc.pw, "olympus", "1.1.1.1")
+			_, err := f.svc.UserLogin(ctx, tc.dni, tc.pw, "olympus", "", "1.1.1.1")
 			if !errors.Is(err, ErrInvalidCredentials) {
 				t.Fatalf("got %v", err)
 			}
@@ -407,7 +433,7 @@ func TestUserLogin(t *testing.T) {
 	t.Run("correct password but no access is forbidden and not counted", func(t *testing.T) {
 		f := newFixture()
 		for _, system := range []string{"pulso", "does-not-exist"} {
-			_, err := f.svc.UserLogin(ctx, "11111111", "user-password", system, "1.1.1.1")
+			_, err := f.svc.UserLogin(ctx, "11111111", "user-password", system, "", "1.1.1.1")
 			if !errors.Is(err, access.ErrNoAccess) {
 				t.Fatalf("%s: got %v", system, err)
 			}
@@ -420,10 +446,10 @@ func TestUserLogin(t *testing.T) {
 	t.Run("throttled after repeated failures", func(t *testing.T) {
 		f := newFixture()
 		for i := 0; i < 3; i++ {
-			_, _ = f.svc.UserLogin(ctx, "11111111", "bad", "olympus", "1.1.1.1")
+			_, _ = f.svc.UserLogin(ctx, "11111111", "bad", "olympus", "", "1.1.1.1")
 		}
 		var tm *TooManyAttemptsError
-		if _, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1"); !errors.As(err, &tm) {
+		if _, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1"); !errors.As(err, &tm) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -431,7 +457,7 @@ func TestUserLogin(t *testing.T) {
 	t.Run("user and admin counters are independent", func(t *testing.T) {
 		f := newFixture()
 		for i := 0; i < 3; i++ {
-			_, _ = f.svc.UserLogin(ctx, "74455518", "bad", "olympus", "1.1.1.1")
+			_, _ = f.svc.UserLogin(ctx, "74455518", "bad", "olympus", "", "1.1.1.1")
 		}
 		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "2.2.2.2"); err != nil {
 			t.Fatalf("admin must not be locked by user attempts: %v", err)
@@ -442,7 +468,7 @@ func TestUserLogin(t *testing.T) {
 func TestUserRefresh(t *testing.T) {
 	ctx := context.Background()
 	loginUser := func(f *fixture) Tokens {
-		tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1")
+		tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -453,7 +479,7 @@ func TestUserRefresh(t *testing.T) {
 		f := newFixture()
 		first := loginUser(f)
 		f.access.grants["u1|olympus"] = access.Grant{SystemID: "s1", SystemCode: "olympus", TenantID: "t1", Role: "admin"}
-		if _, err := f.svc.Refresh(ctx, first.RefreshToken); err != nil {
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); err != nil {
 			t.Fatal(err)
 		}
 		c := f.signer.last
@@ -466,7 +492,7 @@ func TestUserRefresh(t *testing.T) {
 		f := newFixture()
 		first := loginUser(f)
 		delete(f.access.grants, "u1|olympus")
-		if _, err := f.svc.Refresh(ctx, first.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 			t.Fatalf("got %v", err)
 		}
 		if f.refresh.byHash[hashToken(first.RefreshToken)].RevokedAt == nil {
@@ -480,7 +506,7 @@ func TestUserRefresh(t *testing.T) {
 		u := f.users.byDNI["11111111"]
 		u.Status = user.StatusDisabled
 		f.users.byDNI["11111111"] = u
-		if _, err := f.svc.Refresh(ctx, first.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -489,7 +515,7 @@ func TestUserRefresh(t *testing.T) {
 		f := newFixture()
 		first := loginUser(f)
 		delete(f.users.byDNI, "11111111")
-		if _, err := f.svc.Refresh(ctx, first.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -498,7 +524,7 @@ func TestUserRefresh(t *testing.T) {
 func TestPendingPasswordBlocksLogin(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture()
-	_, err := f.svc.UserLogin(ctx, "33333333", "33333333", "olympus", "1.1.1.1")
+	_, err := f.svc.UserLogin(ctx, "33333333", "33333333", "olympus", "", "1.1.1.1")
 	if !errors.Is(err, ErrPasswordChangeRequired) {
 		t.Fatalf("got %v", err)
 	}
@@ -506,10 +532,10 @@ func TestPendingPasswordBlocksLogin(t *testing.T) {
 		t.Fatal("no token may be signed while the password change is pending")
 	}
 	// Reported even for a system the user cannot enter: access is never revealed before the change.
-	if _, err := f.svc.UserLogin(ctx, "33333333", "33333333", "nova", "1.1.1.1"); !errors.Is(err, ErrPasswordChangeRequired) {
+	if _, err := f.svc.UserLogin(ctx, "33333333", "33333333", "nova", "", "1.1.1.1"); !errors.Is(err, ErrPasswordChangeRequired) {
 		t.Fatalf("got %v", err)
 	}
-	if _, err := f.svc.UserLogin(ctx, "33333333", "wrong", "olympus", "1.1.1.1"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := f.svc.UserLogin(ctx, "33333333", "wrong", "olympus", "", "1.1.1.1"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -526,24 +552,24 @@ func TestChangePassword(t *testing.T) {
 		if u.PasswordHash != "my-new-password" || u.MustChangePassword {
 			t.Fatalf("unexpected user: %+v", u)
 		}
-		if _, err := f.svc.UserLogin(ctx, "33333333", "33333333", "olympus", "1.1.1.1"); !errors.Is(err, ErrInvalidCredentials) {
+		if _, err := f.svc.UserLogin(ctx, "33333333", "33333333", "olympus", "", "1.1.1.1"); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("old password must stop working, got %v", err)
 		}
-		if _, err := f.svc.UserLogin(ctx, "33333333", "my-new-password", "olympus", "1.1.1.1"); err != nil {
+		if _, err := f.svc.UserLogin(ctx, "33333333", "my-new-password", "olympus", "", "1.1.1.1"); err != nil {
 			t.Fatalf("login with the new password: %v", err)
 		}
 	})
 
 	t.Run("ends every session", func(t *testing.T) {
 		f := newFixture()
-		first, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1")
+		first, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := f.svc.ChangePassword(ctx, "11111111", "user-password", "another-password", "1.1.1.1"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.svc.Refresh(ctx, first.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -595,11 +621,11 @@ func TestChangePassword(t *testing.T) {
 func TestRefreshDeniedWhilePasswordChangePending(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture()
-	first, _ := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1")
+	first, _ := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
 	u := f.users.byDNI["11111111"]
 	u.MustChangePassword = true
 	f.users.byDNI["11111111"] = u
-	if _, err := f.svc.Refresh(ctx, first.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+	if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -607,11 +633,11 @@ func TestRefreshDeniedWhilePasswordChangePending(t *testing.T) {
 func TestRevokeUserSessions(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture()
-	first, _ := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1")
+	first, _ := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
 	if err := f.svc.RevokeUserSessions(ctx, "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.Refresh(ctx, first.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+	if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -620,7 +646,7 @@ func TestSessionPolicy(t *testing.T) {
 	ctx := context.Background()
 	login := func(f *fixture) Tokens {
 		t.Helper()
-		tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1")
+		tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -659,14 +685,14 @@ func TestSessionPolicy(t *testing.T) {
 
 		// Used within the ceiling: it renews, and the new token has the whole ceiling again.
 		*f.now = f.now.Add(90 * time.Minute)
-		renewed, err := f.svc.Refresh(ctx, tokens.RefreshToken)
+		renewed, err := f.svc.Refresh(ctx, tokens.RefreshToken, "")
 		if err != nil || renewed.RefreshExpiresIn != 2*3600 || renewed.SessionMode != "temporary" {
 			t.Fatalf("got %+v err %v", renewed, err)
 		}
 
 		// Left behind past the ceiling: the session is over.
 		*f.now = f.now.Add(2*time.Hour + time.Minute)
-		if _, err := f.svc.Refresh(ctx, renewed.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+		if _, err := f.svc.Refresh(ctx, renewed.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -676,7 +702,7 @@ func TestSessionPolicy(t *testing.T) {
 		f.svc.temporaryTTL = 2 * time.Hour
 		tokens := login(f)
 		setMode(f, "temporary")
-		renewed, err := f.svc.Refresh(ctx, tokens.RefreshToken)
+		renewed, err := f.svc.Refresh(ctx, tokens.RefreshToken, "")
 		if err != nil || renewed.SessionMode != "temporary" || renewed.RefreshExpiresIn != 2*3600 {
 			t.Fatalf("got %+v err %v", renewed, err)
 		}
@@ -716,7 +742,7 @@ func TestUserTokenIdentifiesPersonAndCompany(t *testing.T) {
 	g.UserName, g.UserDNI, g.TenantRUC = "Ana Pérez", "11111111", "20123456789"
 	f.access.grants["u1|olympus"] = g
 
-	tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "1.1.1.1")
+	tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,7 +753,7 @@ func TestUserTokenIdentifiesPersonAndCompany(t *testing.T) {
 	// A refreshed token carries them too, taken from the current grant.
 	g.UserName = "Ana María Pérez"
 	f.access.grants["u1|olympus"] = g
-	if _, err := f.svc.Refresh(ctx, tokens.RefreshToken); err != nil {
+	if _, err := f.svc.Refresh(ctx, tokens.RefreshToken, ""); err != nil {
 		t.Fatal(err)
 	}
 	if c := f.signer.last; c.Name != "Ana María Pérez" || c.DNI != "11111111" || c.TenantRUC != "20123456789" {
@@ -803,8 +829,126 @@ func TestClientToken(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			_, _ = f.svc.ClientToken(ctx, "olympus", "bad", "1.1.1.1")
 		}
-		if _, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "9.9.9.9"); err != nil {
+		if _, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "9.9.9.9"); err != nil {
 			t.Fatalf("user login must not share the system's counter: %v", err)
 		}
 	})
+}
+
+// A person who works for two companies in the same system.
+func twoCompanies(f *fixture) {
+	f.access.byTenant = map[string]access.Grant{
+		"u1|olympus|t2": {SystemID: "s1", SystemCode: "olympus", TenantID: "t2", Role: "admin", TenantRUC: "20000000002"},
+	}
+}
+
+func TestLoginChoosesTheCompany(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("without a choice it enters the company the access resolver picks", func(t *testing.T) {
+		f := newFixture()
+		twoCompanies(f)
+		tokens, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.signer.last.Tenant != "t1" {
+			t.Fatalf("got %+v", f.signer.last)
+		}
+		// The session remembers its company, and the company becomes the one used last.
+		if stored := f.refresh.byHash[hashToken(tokens.RefreshToken)]; stored.TenantID != "t1" {
+			t.Fatalf("stored %+v", stored)
+		}
+		if len(f.access.used) != 1 || f.access.used[0] != "u1|s1|t1" {
+			t.Fatalf("used %v", f.access.used)
+		}
+	})
+
+	t.Run("a company can be asked for explicitly", func(t *testing.T) {
+		f := newFixture()
+		twoCompanies(f)
+		if _, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "t2", "1.1.1.1"); err != nil {
+			t.Fatal(err)
+		}
+		if c := f.signer.last; c.Tenant != "t2" || c.AppRole != "admin" || c.TenantRUC != "20000000002" {
+			t.Fatalf("got %+v", c)
+		}
+	})
+
+	t.Run("a company the user does not work for is refused", func(t *testing.T) {
+		f := newFixture()
+		if _, err := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "t9", "1.1.1.1"); !errors.Is(err, access.ErrNoAccess) {
+			t.Fatalf("got %v", err)
+		}
+	})
+}
+
+func TestSwitchCompany(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a refresh with another company moves the session to it", func(t *testing.T) {
+		f := newFixture()
+		twoCompanies(f)
+		first, _ := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
+		second, err := f.svc.Refresh(ctx, first.RefreshToken, "t2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c := f.signer.last; c.Tenant != "t2" || c.AppRole != "admin" {
+			t.Fatalf("got %+v", c)
+		}
+		if stored := f.refresh.byHash[hashToken(second.RefreshToken)]; stored.TenantID != "t2" {
+			t.Fatalf("stored %+v", stored)
+		}
+		// Same family, old token spent, and the new company is the one used last.
+		if f.refresh.byHash[hashToken(first.RefreshToken)].UsedAt == nil {
+			t.Fatal("the old token must be spent")
+		}
+		if last := f.access.used[len(f.access.used)-1]; last != "u1|s1|t2" {
+			t.Fatalf("used %v", f.access.used)
+		}
+	})
+
+	t.Run("a plain refresh keeps the company", func(t *testing.T) {
+		f := newFixture()
+		twoCompanies(f)
+		first, _ := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "t2", "1.1.1.1")
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); err != nil {
+			t.Fatal(err)
+		}
+		if f.signer.last.Tenant != "t2" {
+			t.Fatalf("the refresh changed the company: %+v", f.signer.last)
+		}
+	})
+
+	t.Run("a company the user cannot enter is refused and the session survives", func(t *testing.T) {
+		f := newFixture()
+		first, _ := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "", "1.1.1.1")
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, "t9"); !errors.Is(err, access.ErrNoAccess) {
+			t.Fatalf("got %v", err)
+		}
+		// The refresh token was not spent and the family was not revoked.
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); err != nil {
+			t.Fatalf("the session was ended by a refused switch: %v", err)
+		}
+	})
+
+	t.Run("losing the company the session works for still ends it", func(t *testing.T) {
+		f := newFixture()
+		twoCompanies(f)
+		first, _ := f.svc.UserLogin(ctx, "11111111", "user-password", "olympus", "t2", "1.1.1.1")
+		delete(f.access.byTenant, "u1|olympus|t2")
+		if _, err := f.svc.Refresh(ctx, first.RefreshToken, ""); !errors.Is(err, ErrInvalidRefreshToken) {
+			t.Fatalf("got %v", err)
+		}
+	})
+}
+
+func TestTenantsOfASession(t *testing.T) {
+	f := newFixture()
+	f.access.options = map[string][]access.Option{"u1|olympus": {{TenantID: "t1", RUC: "20000000001", Name: "Acme"}, {TenantID: "t2", RUC: "20000000002", Name: "Beta"}}}
+	got, err := f.svc.Tenants(context.Background(), "u1", "olympus")
+	if err != nil || len(got) != 2 || got[1].Name != "Beta" {
+		t.Fatalf("got %+v err %v", got, err)
+	}
 }

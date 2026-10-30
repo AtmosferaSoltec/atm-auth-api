@@ -19,7 +19,13 @@ func (f *fakeRepo) Assign(_ context.Context, a Access) (Access, error)     { f.l
 func (f *fakeRepo) ListByUser(context.Context, string) ([]Detail, error)   { return nil, nil }
 func (f *fakeRepo) ListBySystem(context.Context, string) ([]Detail, error) { return nil, nil }
 func (f *fakeRepo) Remove(context.Context, string, string) error           { return nil }
-func (f *fakeRepo) Resolve(context.Context, string, string) (Grant, error) {
+func (f *fakeRepo) RemoveByID(context.Context, string) error               { return nil }
+
+func (f *fakeRepo) Options(context.Context, string, string) ([]Option, error) { return nil, nil }
+
+func (f *fakeRepo) MarkUsed(context.Context, string, string, string) error { return nil }
+
+func (f *fakeRepo) Resolve(context.Context, string, string, string) (Grant, error) {
 	return Grant{}, ErrNoAccess
 }
 

@@ -29,7 +29,8 @@ type UserManager interface {
 
 type AccessManager interface {
 	Assign(ctx context.Context, in access.AssignInput) (access.Access, error)
-	Resolve(ctx context.Context, userID, systemCode string) (access.Grant, error)
+	Resolve(ctx context.Context, userID, systemCode, tenantID string) (access.Grant, error)
+	Options(ctx context.Context, userID, systemCode string) ([]access.Option, error)
 }
 
 type Service struct {
@@ -44,8 +45,12 @@ func NewService(repo Repository, finder UserFinder, users UserManager, accessMgr
 }
 
 // Authorize turns an authenticated user into a Scope. It reads the database, not the token, so a revoked
-// permission stops working immediately.
-func (s *Service) Authorize(ctx context.Context, userID, systemCode string) (Scope, error) {
+// permission stops working immediately. tenantID is the company of the token: a person who owns two
+// companies manages the members of the one they are working for, never of the other.
+func (s *Service) Authorize(ctx context.Context, userID, systemCode, tenantID string) (Scope, error) {
+	if tenantID == "" {
+		return Scope{}, ErrNotManager
+	}
 	u, err := s.finder.GetByID(ctx, userID)
 	if errors.Is(err, user.ErrUserNotFound) {
 		return Scope{}, ErrNotManager
@@ -56,7 +61,7 @@ func (s *Service) Authorize(ctx context.Context, userID, systemCode string) (Sco
 	if u.Status != user.StatusActive || u.MustChangePassword {
 		return Scope{}, ErrNotManager
 	}
-	g, err := s.access.Resolve(ctx, userID, systemCode)
+	g, err := s.access.Resolve(ctx, userID, systemCode, tenantID)
 	if errors.Is(err, access.ErrNoAccess) {
 		return Scope{}, ErrNotManager
 	}
@@ -106,6 +111,18 @@ func (s *Service) Add(ctx context.Context, sc Scope, in AddInput) (Member, error
 	}
 	if err != nil {
 		return Member{}, fmt.Errorf("add member: %w", err)
+	}
+
+	// A person who already works for another company in this system is not added by an owner: it would put a
+	// customer's staff inside another customer's company. Only the superadmin gives a person several companies.
+	options, err := s.access.Options(ctx, u.ID, sc.SystemCode)
+	if err != nil {
+		return Member{}, fmt.Errorf("add member: %w", err)
+	}
+	for _, o := range options {
+		if o.TenantID != sc.TenantID {
+			return Member{}, access.ErrUserAlreadyInSystem
+		}
 	}
 
 	// Never grants manage_users: only the superadmin does.

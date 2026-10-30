@@ -49,7 +49,7 @@ var failures = map[error]httpx.Failure{
 func (h *Handler) guard(next func(http.ResponseWriter, *http.Request, Scope)) http.Handler {
 	return auth.RequireRole(h.verifier, session.RoleUser)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, _ := auth.ClaimsFromContext(r.Context())
-		sc, err := h.svc.Authorize(r.Context(), claims.Subject, claims.System)
+		sc, err := h.svc.Authorize(r.Context(), claims.Subject, claims.System, claims.Tenant)
 		if err != nil {
 			httpx.Fail(w, r, h.log, err, failures)
 			return
