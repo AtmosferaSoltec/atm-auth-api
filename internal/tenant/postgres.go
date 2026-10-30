@@ -24,26 +24,69 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const columns = "id, ruc, legal_name, trade_name, address, department, province, district, ubigeo, phone, email, coalesce(logo_file_id::text, ''), status, created_at, updated_at"
+const columns = "t.id, t.ruc, t.legal_name, t.trade_name, t.address, t.department, t.province, t.district, t.ubigeo, t.phone, t.email, coalesce(t.logo_file_id::text, ''), t.client_id, c.name, t.status, t.created_at, t.updated_at"
+
+// from joins the owner of each company.
+const from = " FROM tenants t JOIN clients c ON c.id = t.client_id "
 
 func scan(row pgx.Row) (Tenant, error) {
 	var t Tenant
-	err := row.Scan(&t.ID, &t.RUC, &t.LegalName, &t.TradeName, &t.Address, &t.Department, &t.Province, &t.District, &t.Ubigeo, &t.Phone, &t.Email, &t.LogoFileID, &t.Status, &t.CreatedAt, &t.UpdatedAt)
+	err := row.Scan(&t.ID, &t.RUC, &t.LegalName, &t.TradeName, &t.Address, &t.Department, &t.Province, &t.District, &t.Ubigeo, &t.Phone, &t.Email, &t.LogoFileID, &t.ClientID, &t.ClientName, &t.Status, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, t Tenant) (Tenant, error) {
-	created, err := scan(r.pool.QueryRow(ctx,
-		`INSERT INTO tenants (ruc, legal_name, trade_name, status) VALUES ($1, $2, $3, $4) RETURNING `+columns,
-		t.RUC, t.LegalName, t.TradeName, t.Status))
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Tenant{}, fmt.Errorf("begin create tenant: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	clientID := t.ClientID
+	if clientID == "" {
+		if err := tx.QueryRow(ctx, `INSERT INTO clients (name) VALUES ($1) RETURNING id`, t.DisplayName()).Scan(&clientID); err != nil {
+			return Tenant{}, fmt.Errorf("insert client: %w", err)
+		}
+	}
+	var id string
+	err = tx.QueryRow(ctx,
+		`INSERT INTO tenants (ruc, legal_name, trade_name, status, client_id) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		t.RUC, t.LegalName, t.TradeName, t.Status, clientID).Scan(&id)
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
-			return Tenant{}, ErrRUCTaken
+		if errors.As(err, &pgErr) {
+			switch {
+			case pgErr.Code == uniqueViolation:
+				return Tenant{}, ErrRUCTaken
+			case pgErr.Code == foreignKeyViolation && strings.Contains(pgErr.ConstraintName, "client_id"):
+				return Tenant{}, ErrClientNotFound
+			}
 		}
 		return Tenant{}, fmt.Errorf("insert tenant: %w", err)
 	}
+	created, err := scan(tx.QueryRow(ctx, `SELECT `+columns+from+`WHERE t.id = $1`, id))
+	if err != nil {
+		return Tenant{}, fmt.Errorf("select created tenant: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Tenant{}, fmt.Errorf("commit create tenant: %w", err)
+	}
 	return created, nil
+}
+
+func (r *PostgresRepository) SetClient(ctx context.Context, tenantID, clientID string) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE tenants SET client_id = $2, updated_at = now() WHERE id = $1`, tenantID, clientID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolation {
+			return ErrClientNotFound
+		}
+		return fmt.Errorf("set tenant client: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTenantNotFound
+	}
+	return nil
 }
 
 func (r *PostgresRepository) Update(ctx context.Context, t Tenant) error {
@@ -62,7 +105,7 @@ func (r *PostgresRepository) Update(ctx context.Context, t Tenant) error {
 }
 
 func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Tenant, error) {
-	t, err := scan(r.pool.QueryRow(ctx, `SELECT `+columns+` FROM tenants WHERE id = $1`, id))
+	t, err := scan(r.pool.QueryRow(ctx, `SELECT `+columns+from+`WHERE t.id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Tenant{}, ErrTenantNotFound
 	}
@@ -78,7 +121,7 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Tenant, er
 }
 
 func (r *PostgresRepository) List(ctx context.Context) ([]Tenant, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+columns+` FROM tenants ORDER BY legal_name`)
+	rows, err := r.pool.Query(ctx, `SELECT `+columns+from+`ORDER BY t.legal_name`)
 	if err != nil {
 		return nil, fmt.Errorf("select tenants: %w", err)
 	}
@@ -107,11 +150,11 @@ func (r *PostgresRepository) List(ctx context.Context) ([]Tenant, error) {
 
 func (r *PostgresRepository) ListForSystem(ctx context.Context, systemCode string) ([]Tenant, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+columns+` FROM tenants
-		  WHERE status = 'active' AND id IN (
+		`SELECT `+columns+from+`
+		  WHERE t.status = 'active' AND t.id IN (
 		        SELECT ts.tenant_id FROM tenant_systems ts JOIN systems s ON s.id = ts.system_id
 		         WHERE s.code = $1 AND s.status = 'active' AND ts.status = 'active')
-		  ORDER BY legal_name`, systemCode)
+		  ORDER BY t.legal_name`, systemCode)
 	if err != nil {
 		return nil, fmt.Errorf("select tenants of system: %w", err)
 	}

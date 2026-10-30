@@ -24,6 +24,7 @@ func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 	mux.Handle("GET /v1/admin/tenants", admin(http.HandlerFunc(h.list)))
 	mux.Handle("GET /v1/admin/tenants/{id}", admin(http.HandlerFunc(h.get)))
 	mux.Handle("PUT /v1/admin/tenants/{id}", admin(http.HandlerFunc(h.update)))
+	mux.Handle("PUT /v1/admin/tenants/{id}/client", admin(http.HandlerFunc(h.setClient)))
 	mux.Handle("POST /v1/admin/tenants/{id}/systems", admin(http.HandlerFunc(h.enableSystem)))
 	mux.Handle("DELETE /v1/admin/tenants/{id}/systems/{system_id}", admin(http.HandlerFunc(h.disableSystem)))
 }
@@ -44,6 +45,7 @@ var failures = map[error]httpx.Failure{
 	ErrInvalidLogo:          {Status: http.StatusBadRequest, Message: "The logo must be a file id."},
 	ErrFieldTooLong:         {Status: http.StatusBadRequest, Message: "A field is too long."},
 	ErrRUCTaken:             {Status: http.StatusConflict, Message: "A tenant with that RUC already exists."},
+	ErrClientNotFound:       {Status: http.StatusNotFound, Message: "Client not found."},
 	ErrTenantNotFound:       {Status: http.StatusNotFound, Message: "Tenant not found."},
 	ErrSystemNotFound:       {Status: http.StatusNotFound, Message: "System not found."},
 	ErrSystemAlreadyEnabled: {Status: http.StatusConflict, Message: "The system is already enabled for this tenant."},
@@ -70,7 +72,10 @@ type tenantJSON struct {
 	Phone       string `json:"phone"`
 	Email       string `json:"email"`
 	// LogoFileID is null while the company has no logo.
-	LogoFileID *string   `json:"logo_file_id"`
+	LogoFileID *string `json:"logo_file_id"`
+	// ClientID is the owner of the company; companies of one client can share data inside a system.
+	ClientID   string    `json:"client_id"`
+	ClientName string    `json:"client_name"`
 	Status     string    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 	// Systems is never null: a tenant without systems has an empty list.
@@ -86,7 +91,7 @@ func toJSON(t Tenant) tenantJSON {
 		ID: t.ID, RUC: t.RUC, LegalName: t.LegalName, TradeName: t.TradeName,
 		DisplayName: t.DisplayName(), Address: t.Address, Department: t.Department, Province: t.Province, District: t.District,
 		Ubigeo: t.Ubigeo, Phone: t.Phone, Email: t.Email, LogoFileID: logoPointer(t.LogoFileID),
-		Status: t.Status, CreatedAt: t.CreatedAt, Systems: systems,
+		ClientID: t.ClientID, ClientName: t.ClientName, Status: t.Status, CreatedAt: t.CreatedAt, Systems: systems,
 	}
 }
 
@@ -102,12 +107,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		RUC       string `json:"ruc"`
 		LegalName string `json:"legal_name"`
 		TradeName string `json:"trade_name"`
+		ClientID  string `json:"client_id"`
 	}
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
 		return
 	}
-	t, err := h.svc.Create(r.Context(), CreateInput{RUC: req.RUC, LegalName: req.LegalName, TradeName: req.TradeName})
+	t, err := h.svc.Create(r.Context(), CreateInput{RUC: req.RUC, LegalName: req.LegalName, TradeName: req.TradeName, ClientID: req.ClientID})
 	if err != nil {
 		httpx.Fail(w, r, h.log, err, failures)
 		return
@@ -136,6 +142,22 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		LegalName: req.LegalName, TradeName: req.TradeName, Address: req.Address, Department: req.Department, Province: req.Province,
 		District: req.District, Ubigeo: req.Ubigeo, Phone: req.Phone, Email: req.Email, LogoFileID: req.LogoFileID,
 	})
+	if err != nil {
+		httpx.Fail(w, r, h.log, err, failures)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, toJSON(t))
+}
+
+func (h *Handler) setClient(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ClientID string `json:"client_id"`
+	}
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
+		return
+	}
+	t, err := h.svc.SetClient(r.Context(), r.PathValue("id"), req.ClientID)
 	if err != nil {
 		httpx.Fail(w, r, h.log, err, failures)
 		return
@@ -204,6 +226,8 @@ type serviceTenantJSON struct {
 	Email       string `json:"email"`
 	// LogoFileID is null while the company has no logo.
 	LogoFileID *string `json:"logo_file_id"`
+	// ClientID is the owner of the company. A system shares data between the companies that have the same one.
+	ClientID string `json:"client_id"`
 }
 
 func (h *Handler) listForSystem(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +246,7 @@ func (h *Handler) listForSystem(w http.ResponseWriter, r *http.Request) {
 		out = append(out, serviceTenantJSON{
 			ID: t.ID, RUC: t.RUC, LegalName: t.LegalName, TradeName: t.TradeName, DisplayName: t.DisplayName(),
 			Address: t.Address, Department: t.Department, Province: t.Province, District: t.District,
-			Ubigeo: t.Ubigeo, Phone: t.Phone, Email: t.Email, LogoFileID: logoPointer(t.LogoFileID),
+			Ubigeo: t.Ubigeo, Phone: t.Phone, Email: t.Email, LogoFileID: logoPointer(t.LogoFileID), ClientID: t.ClientID,
 		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})

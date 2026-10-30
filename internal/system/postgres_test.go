@@ -48,7 +48,7 @@ func TestPostgresDeleteCascades(t *testing.T) {
 		t.Fatal(err)
 	}
 	var tenantID string
-	if err := pool.QueryRow(ctx, `INSERT INTO tenants (ruc, legal_name) VALUES ('20123456789', 'Gym SAC') RETURNING id`).Scan(&tenantID); err != nil {
+	if err := pool.QueryRow(ctx, `WITH c AS (INSERT INTO clients (name) VALUES ('Gym SAC') RETURNING id) INSERT INTO tenants (ruc, legal_name, client_id) SELECT '20123456789', 'Gym SAC', id FROM c RETURNING id`).Scan(&tenantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO tenant_systems (tenant_id, system_id) VALUES ($1, $2)`, tenantID, sys.ID); err != nil {

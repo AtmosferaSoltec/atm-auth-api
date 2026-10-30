@@ -8,6 +8,7 @@ import (
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/auth"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/client"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/httpx"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
@@ -25,6 +26,7 @@ type Deps struct {
 	JWKS     []byte
 	Session  *session.Handler
 	Systems  *system.Handler
+	Clients  *client.Handler
 	Tenants  *tenant.Handler
 	Users    *user.Handler
 	Access   *access.Handler
@@ -54,7 +56,7 @@ func New(log *slog.Logger, d Deps) http.Handler {
 	requireAdmin := httpx.Middleware(auth.RequireRole(d.Verifier, session.RoleSuperadmin))
 	for _, h := range []interface {
 		Register(*http.ServeMux, httpx.Middleware)
-	}{d.Systems, d.Tenants, d.Users, d.Access, d.Secrets, d.Roles} {
+	}{d.Systems, d.Clients, d.Tenants, d.Users, d.Access, d.Secrets, d.Roles} {
 		h.Register(mux, requireAdmin)
 	}
 	// Routes for a system's own backend, with the service token from POST /v1/token.

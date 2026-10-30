@@ -28,8 +28,8 @@ func TestPostgresScopeIsolation(t *testing.T) {
 	}
 	system := id(`INSERT INTO systems (code, name) VALUES ('olympus', 'Olympus')`)
 	system2 := id(`INSERT INTO systems (code, name) VALUES ('pulso', 'Pulso')`)
-	gymA := id(`INSERT INTO tenants (ruc, legal_name) VALUES ('20111111111', 'Gym A')`)
-	gymB := id(`INSERT INTO tenants (ruc, legal_name) VALUES ('20222222222', 'Gym B')`)
+	gymA := id(`WITH c AS (INSERT INTO clients (name) VALUES ('Gym A') RETURNING id) INSERT INTO tenants (ruc, legal_name, client_id) SELECT '20111111111', 'Gym A', id FROM c`)
+	gymB := id(`WITH c AS (INSERT INTO clients (name) VALUES ('Gym B') RETURNING id) INSERT INTO tenants (ruc, legal_name, client_id) SELECT '20222222222', 'Gym B', id FROM c`)
 	platform.SeedRoles(t, pool, system, "dueño", "cajero", "supervisor")
 	platform.SeedRoles(t, pool, system2, "cajero")
 	for _, ts := range [][2]string{{gymA, system}, {gymB, system}, {gymB, system2}} {

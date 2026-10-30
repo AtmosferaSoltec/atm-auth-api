@@ -47,6 +47,8 @@ func (f *fakeRepo) Update(_ context.Context, t Tenant) error {
 
 func (f *fakeRepo) List(context.Context) ([]Tenant, error) { return nil, nil }
 
+func (f *fakeRepo) SetClient(context.Context, string, string) error { return nil }
+
 func (f *fakeRepo) ListForSystem(context.Context, string) ([]Tenant, error) { return nil, nil }
 
 func (f *fakeRepo) EnableSystem(_ context.Context, tenantID, systemID string) error {

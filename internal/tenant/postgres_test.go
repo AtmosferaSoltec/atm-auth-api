@@ -83,6 +83,54 @@ func TestPostgresRepository(t *testing.T) {
 	}
 }
 
+func TestPostgresClients(t *testing.T) {
+	ctx := context.Background()
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
+
+	// A company created without a client gets its own, named after it; the client comes with the company.
+	created, err := repo.Create(ctx, Tenant{RUC: "20123456789", LegalName: "Acme SAC", TradeName: "Acme", Status: StatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ClientID == "" || created.ClientName != "Acme" {
+		t.Fatalf("got client %q (%q), want its own client named Acme", created.ClientID, created.ClientName)
+	}
+	joined, err := repo.Create(ctx, Tenant{RUC: "20555555555", LegalName: "Hermana SAC", Status: StatusActive, ClientID: created.ClientID})
+	if err != nil || joined.ClientID != created.ClientID {
+		t.Fatalf("got %+v err %v", joined, err)
+	}
+	if _, err := repo.Create(ctx, Tenant{RUC: "20666666666", LegalName: "Huerfana SAC", Status: StatusActive, ClientID: missingID}); !errors.Is(err, ErrClientNotFound) {
+		t.Fatalf("got %v", err)
+	}
+	var orphans int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM tenants WHERE ruc = '20666666666'`).Scan(&orphans); err != nil || orphans != 0 {
+		t.Fatalf("a failed create left %d rows, err %v", orphans, err)
+	}
+	var clientCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM clients`).Scan(&clientCount); err != nil || clientCount != 1 {
+		t.Fatalf("a failed create must not leave a client behind: got %d, err %v", clientCount, err)
+	}
+
+	// Moving a company to another client.
+	var otherClient string
+	if err := pool.QueryRow(ctx, `INSERT INTO clients (name) VALUES ('Tabernero') RETURNING id`).Scan(&otherClient); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetClient(ctx, joined.ID, otherClient); err != nil {
+		t.Fatal(err)
+	}
+	if moved, err := repo.GetByID(ctx, joined.ID); err != nil || moved.ClientID != otherClient || moved.ClientName != "Tabernero" {
+		t.Fatalf("got %+v err %v", moved, err)
+	}
+	if err := repo.SetClient(ctx, joined.ID, missingID); !errors.Is(err, ErrClientNotFound) {
+		t.Fatalf("got %v", err)
+	}
+	if err := repo.SetClient(ctx, missingID, otherClient); !errors.Is(err, ErrTenantNotFound) {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestPostgresDisableSystem(t *testing.T) {
 	ctx := context.Background()
 	pool := platform.NewTestPool(t)
@@ -125,7 +173,7 @@ func TestPostgresDisableSystem(t *testing.T) {
 
 func TestRUCConstraint(t *testing.T) {
 	pool := platform.NewTestPool(t)
-	_, err := pool.Exec(context.Background(), `INSERT INTO tenants (ruc, legal_name) VALUES ('123', 'x')`)
+	_, err := pool.Exec(context.Background(), `WITH c AS (INSERT INTO clients (name) VALUES ('x') RETURNING id) INSERT INTO tenants (ruc, legal_name, client_id) SELECT '123', 'x', id FROM c`)
 	if err == nil {
 		t.Fatal("database must reject a malformed RUC")
 	}

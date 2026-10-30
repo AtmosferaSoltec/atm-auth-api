@@ -13,7 +13,8 @@ Instructions for every AI agent (and human) working in this repository. Read it 
 ATM-Auth-API is the single source of truth for identity and access across all ATM systems:
 
 - Global user accounts: one account per person, identified by national ID (DNI).
-- Systems (Olympus, Lavendimia, Pulso, Nova, Orbita) and tenants (customers).
+- Systems (Olympus, Lavendimia, Pulso, Nova, Orbita) and tenants (companies, one per RUC).
+- Clients: the real customer that owns one or more tenants (`tenants.client_id`, never null). A system decides what the tenants of one client share (for example the buyers of two stores of the same owner); this service only says who belongs to whom. A new tenant without a `client_id` gets its own client named after it.
 - Access: which user can enter which system, in which tenant, with which role.
 - Login, refresh, and logout. Issues short-lived RS256 JWT access tokens.
 - Admin API (superadmin only) used by ATM-Console-Web to manage all of the above.

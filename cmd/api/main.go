@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/client"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/config"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
@@ -107,6 +108,7 @@ func run(log *slog.Logger) error {
 			JWKS:     jwks,
 			Session:  session.NewHandler(sessionSvc, log, cfg.ClientIPHeader),
 			Systems:  system.NewHandler(system.NewService(system.NewPostgresRepository(pool)), log),
+			Clients:  client.NewHandler(client.NewService(client.NewPostgresRepository(pool)), log),
 			Tenants:  tenant.NewHandler(tenant.NewService(tenant.NewPostgresRepository(pool)), log),
 			Users:    user.NewHandler(userSvc, log),
 			Access:   access.NewHandler(accessSvc, log),

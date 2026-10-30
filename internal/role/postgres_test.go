@@ -55,7 +55,7 @@ func TestPostgresRepository(t *testing.T) {
 	t.Run("list is per system, ordered, with the number of people", func(t *testing.T) {
 		user := insertID(t, pool, `INSERT INTO users (dni, full_name, password_hash) VALUES ('11111111', 'Ana', 'h')`)
 		other := insertID(t, pool, `INSERT INTO users (dni, full_name, password_hash) VALUES ('22222222', 'Beto', 'h')`)
-		acme := insertID(t, pool, `INSERT INTO tenants (ruc, legal_name) VALUES ('20123456789', 'Acme')`)
+		acme := insertID(t, pool, `WITH c AS (INSERT INTO clients (name) VALUES ('Acme') RETURNING id) INSERT INTO tenants (ruc, legal_name, client_id) SELECT '20123456789', 'Acme', id FROM c`)
 		if _, err := pool.Exec(ctx, `INSERT INTO tenant_systems (tenant_id, system_id) VALUES ($1, $2)`, acme, olympus); err != nil {
 			t.Fatal(err)
 		}

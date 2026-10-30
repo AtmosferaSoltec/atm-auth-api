@@ -34,8 +34,8 @@ func newWorld(t *testing.T) world {
 	w.other = insertID(t, pool, `INSERT INTO users (dni, full_name, password_hash) VALUES ('22222222', 'Beto', 'h')`)
 	w.olympus = insertID(t, pool, `INSERT INTO systems (code, name) VALUES ('olympus', 'Olympus')`)
 	w.pulso = insertID(t, pool, `INSERT INTO systems (code, name) VALUES ('pulso', 'Pulso')`)
-	w.acme = insertID(t, pool, `INSERT INTO tenants (ruc, legal_name) VALUES ('20123456789', 'Acme')`)
-	w.globex = insertID(t, pool, `INSERT INTO tenants (ruc, legal_name) VALUES ('20987654321', 'Globex')`)
+	w.acme = insertID(t, pool, `WITH c AS (INSERT INTO clients (name) VALUES ('Acme') RETURNING id) INSERT INTO tenants (ruc, legal_name, client_id) SELECT '20123456789', 'Acme', id FROM c`)
+	w.globex = insertID(t, pool, `WITH c AS (INSERT INTO clients (name) VALUES ('Globex') RETURNING id) INSERT INTO tenants (ruc, legal_name, client_id) SELECT '20987654321', 'Globex', id FROM c`)
 	for _, sys := range []string{w.olympus, w.pulso} {
 		platform.SeedRoles(t, pool, sys, "cajero", "admin", "dueño", "x", "otro")
 	}

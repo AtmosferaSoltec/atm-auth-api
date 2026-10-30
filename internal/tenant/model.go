@@ -40,6 +40,9 @@ type Tenant struct {
 	Email  string
 	// LogoFileID is the id of the logo in atm-storage-api, or "" when there is none.
 	LogoFileID string
+	// ClientID is the owner of the company (see the client package); ClientName is its name.
+	ClientID   string
+	ClientName string
 	Status     string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time

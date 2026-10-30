@@ -23,6 +23,8 @@ type CreateInput struct {
 	RUC       string
 	LegalName string
 	TradeName string
+	// ClientID is optional: without it the company gets a new client named after it.
+	ClientID string
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (Tenant, error) {
@@ -33,8 +35,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Tenant, error) {
 	if legal == "" {
 		return Tenant{}, ErrInvalidLegalName
 	}
+	if in.ClientID != "" && !platform.IsUUID(in.ClientID) {
+		return Tenant{}, ErrInvalidID
+	}
 	created, err := s.repo.Create(ctx, Tenant{
-		RUC: in.RUC, LegalName: legal, TradeName: normalizeName(in.TradeName), Status: StatusActive,
+		RUC: in.RUC, LegalName: legal, TradeName: normalizeName(in.TradeName), Status: StatusActive, ClientID: in.ClientID,
 	})
 	if err != nil {
 		return Tenant{}, fmt.Errorf("create tenant: %w", err)
@@ -137,6 +142,17 @@ func (s *Service) ListForSystem(ctx context.Context, systemCode string) ([]Tenan
 		return nil, fmt.Errorf("list tenants of system: %w", err)
 	}
 	return ts, nil
+}
+
+// SetClient moves the company to another client and returns it.
+func (s *Service) SetClient(ctx context.Context, tenantID, clientID string) (Tenant, error) {
+	if !platform.IsUUID(tenantID) || !platform.IsUUID(clientID) {
+		return Tenant{}, ErrInvalidID
+	}
+	if err := s.repo.SetClient(ctx, tenantID, clientID); err != nil {
+		return Tenant{}, fmt.Errorf("set tenant client: %w", err)
+	}
+	return s.Get(ctx, tenantID)
 }
 
 // EnableSystem records that the tenant has contracted the system.
