@@ -57,7 +57,7 @@ func TestMigrationRegistersTheSystemsWithoutTouchingExistingOnes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range all {
-		if name == "0012_seed_systems.sql" || name == "0013_seed_system_roles.sql" {
+		if name == "0012_seed_systems.sql" || name == "0013_seed_system_roles.sql" || name == "0014_optional_ruc.sql" {
 			continue
 		}
 		data, err := fs.ReadFile(migrations.Files, name)
@@ -98,6 +98,16 @@ func TestMigrationRegistersTheSystemsWithoutTouchingExistingOnes(t *testing.T) {
 	want := []row{{"lavendimia", "Nombre propio", "temporary", true}, {"pulso", "Pulso", "persistent", false}}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+
+	// Pulso works without a RUC; any other system asks for one unless said otherwise.
+	var pulsoRequires, lavendimiaRequires bool
+	if err := pool.QueryRow(ctx, `SELECT (SELECT requires_ruc FROM systems WHERE code = 'pulso'), (SELECT requires_ruc FROM systems WHERE code = 'lavendimia')`).
+		Scan(&pulsoRequires, &lavendimiaRequires); err != nil {
+		t.Fatal(err)
+	}
+	if pulsoRequires || !lavendimiaRequires {
+		t.Fatalf("requires_ruc: pulso=%v lavendimia=%v, want false and true", pulsoRequires, lavendimiaRequires)
 	}
 
 	var roles []string
@@ -164,5 +174,22 @@ func TestPostgresReportsSecret(t *testing.T) {
 	got, err := repo.GetByID(ctx, id)
 	if err != nil || !got.HasSecret || got.SecretCreatedAt == nil || got.SecretLastUsedAt != nil {
 		t.Fatalf("got %+v err %v", got, err)
+	}
+}
+
+func TestPostgresRequiresRUC(t *testing.T) {
+	ctx := context.Background()
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
+
+	id := platform.SeedSystem(t, pool, "olympus", "Olympus")
+	if got, err := repo.GetByID(ctx, id); err != nil || !got.RequiresRUC {
+		t.Fatalf("a system needs a RUC unless said otherwise: %+v err %v", got, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE systems SET requires_ruc = false WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.GetByID(ctx, id); got.RequiresRUC {
+		t.Fatalf("got %+v", got)
 	}
 }

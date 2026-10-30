@@ -24,7 +24,7 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const columns = "t.id, t.ruc, t.legal_name, t.trade_name, t.address, t.department, t.province, t.district, t.ubigeo, t.phone, t.email, coalesce(t.logo_file_id::text, ''), t.client_id, c.name, t.status, t.created_at, t.updated_at"
+const columns = "t.id, coalesce(t.ruc, ''), t.legal_name, t.trade_name, t.address, t.department, t.province, t.district, t.ubigeo, t.phone, t.email, coalesce(t.logo_file_id::text, ''), t.client_id, c.name, t.status, t.created_at, t.updated_at"
 
 // from joins the owner of each company.
 const from = " FROM tenants t JOIN clients c ON c.id = t.client_id "
@@ -50,7 +50,7 @@ func (r *PostgresRepository) Create(ctx context.Context, t Tenant) (Tenant, erro
 	}
 	var id string
 	err = tx.QueryRow(ctx,
-		`INSERT INTO tenants (ruc, legal_name, trade_name, status, client_id) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		`INSERT INTO tenants (ruc, legal_name, trade_name, status, client_id) VALUES (NULLIF($1, ''), $2, $3, $4, $5) RETURNING id`,
 		t.RUC, t.LegalName, t.TradeName, t.Status, clientID).Scan(&id)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -92,10 +92,15 @@ func (r *PostgresRepository) SetClient(ctx context.Context, tenantID, clientID s
 func (r *PostgresRepository) Update(ctx context.Context, t Tenant) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE tenants SET legal_name = $2, trade_name = $3, address = $4, department = $5, province = $6, district = $7,
-		        ubigeo = $8, phone = $9, email = $10, logo_file_id = NULLIF($11, '')::uuid, updated_at = now()
+		        ubigeo = $8, phone = $9, email = $10, logo_file_id = NULLIF($11, '')::uuid,
+		        ruc = CASE WHEN ruc IS NULL THEN NULLIF($12, '') ELSE ruc END, updated_at = now()
 		  WHERE id = $1`,
-		t.ID, t.LegalName, t.TradeName, t.Address, t.Department, t.Province, t.District, t.Ubigeo, t.Phone, t.Email, t.LogoFileID)
+		t.ID, t.LegalName, t.TradeName, t.Address, t.Department, t.Province, t.District, t.Ubigeo, t.Phone, t.Email, t.LogoFileID, t.RUC)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+			return ErrRUCTaken
+		}
 		return fmt.Errorf("update tenant: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
@@ -201,7 +206,17 @@ func (r *PostgresRepository) systemsByTenant(ctx context.Context, tenantID strin
 }
 
 func (r *PostgresRepository) EnableSystem(ctx context.Context, tenantID, systemID string) error {
-	_, err := r.pool.Exec(ctx, `INSERT INTO tenant_systems (tenant_id, system_id) VALUES ($1, $2)`, tenantID, systemID)
+	var hasNoRUC, requiresRUC bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT t.ruc IS NULL, s.requires_ruc FROM tenants t, systems s WHERE t.id = $1 AND s.id = $2`,
+		tenantID, systemID).Scan(&hasNoRUC, &requiresRUC)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("check ruc requirement: %w", err)
+	}
+	if err == nil && hasNoRUC && requiresRUC {
+		return ErrRUCRequired
+	}
+	_, err = r.pool.Exec(ctx, `INSERT INTO tenant_systems (tenant_id, system_id) VALUES ($1, $2)`, tenantID, systemID)
 	if err == nil {
 		return nil
 	}

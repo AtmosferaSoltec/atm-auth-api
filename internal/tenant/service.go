@@ -27,8 +27,11 @@ type CreateInput struct {
 	ClientID string
 }
 
+// Create registers a company. The RUC is optional (a gym run by one person may have none); the legal name is
+// the only required field and, for a person, is simply their name or the gym's name.
 func (s *Service) Create(ctx context.Context, in CreateInput) (Tenant, error) {
-	if !validRUC(in.RUC) {
+	in.RUC = strings.TrimSpace(in.RUC)
+	if in.RUC != "" && !validRUC(in.RUC) {
 		return Tenant{}, ErrInvalidRUC
 	}
 	legal := normalizeName(in.LegalName)
@@ -47,8 +50,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Tenant, error) {
 	return created, nil
 }
 
-// UpdateInput is the whole editable profile: a field left empty is cleared. The RUC never changes.
+// UpdateInput is the whole editable profile: a field left empty is cleared. The RUC is the exception: a company
+// that has one keeps it, and one without may set it once. Empty means "leave it as it is".
 type UpdateInput struct {
+	RUC                                     string
 	LegalName, TradeName                    string
 	Address, Department, Province, District string
 	Ubigeo, Phone, Email, LogoFileID        string
@@ -75,8 +80,12 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Tenant
 	if !platform.IsUUID(id) {
 		return Tenant{}, ErrInvalidID
 	}
+	ruc := strings.TrimSpace(in.RUC)
+	if ruc != "" && !validRUC(ruc) {
+		return Tenant{}, ErrInvalidRUC
+	}
 	t := Tenant{
-		ID: id, LegalName: normalizeName(in.LegalName), TradeName: normalizeName(in.TradeName),
+		ID: id, RUC: ruc, LegalName: normalizeName(in.LegalName), TradeName: normalizeName(in.TradeName),
 		Address: normalizeName(in.Address), Department: normalizeName(in.Department), Province: normalizeName(in.Province),
 		District: normalizeName(in.District), Ubigeo: strings.TrimSpace(in.Ubigeo), Phone: strings.TrimSpace(in.Phone),
 		Email: strings.TrimSpace(in.Email), LogoFileID: strings.TrimSpace(in.LogoFileID),
@@ -106,6 +115,15 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Tenant
 	}
 	if t.LogoFileID != "" && !platform.IsUUID(t.LogoFileID) {
 		return Tenant{}, ErrInvalidLogo
+	}
+	if ruc != "" {
+		current, err := s.repo.GetByID(ctx, id)
+		if err != nil {
+			return Tenant{}, fmt.Errorf("get tenant: %w", err)
+		}
+		if current.RUC != "" && current.RUC != ruc {
+			return Tenant{}, ErrRUCImmutable
+		}
 	}
 	if err := s.repo.Update(ctx, t); err != nil {
 		return Tenant{}, fmt.Errorf("update tenant: %w", err)

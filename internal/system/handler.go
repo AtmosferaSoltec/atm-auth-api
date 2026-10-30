@@ -36,6 +36,8 @@ type systemJSON struct {
 	Status string `json:"status"`
 	// SessionMode is "persistent" (remembers the user) or "temporary" (does not).
 	SessionMode string `json:"session_mode"`
+	// RequiresRUC is true when the system can only be enabled for companies that have a RUC.
+	RequiresRUC bool `json:"requires_ruc"`
 	// HasSecret says whether the system can ask for service tokens. The secret itself is never returned.
 	HasSecret        bool       `json:"has_secret"`
 	SecretCreatedAt  *time.Time `json:"secret_created_at,omitempty"`
@@ -46,8 +48,8 @@ type systemJSON struct {
 func toJSON(s System) systemJSON {
 	return systemJSON{
 		ID: s.ID, Code: s.Code, Name: s.Name, Status: s.Status,
-		SessionMode: s.SessionMode,
-		HasSecret:   s.HasSecret, SecretCreatedAt: s.SecretCreatedAt, SecretLastUsedAt: s.SecretLastUsedAt, CreatedAt: s.CreatedAt,
+		SessionMode: s.SessionMode, RequiresRUC: s.RequiresRUC,
+		HasSecret: s.HasSecret, SecretCreatedAt: s.SecretCreatedAt, SecretLastUsedAt: s.SecretLastUsedAt, CreatedAt: s.CreatedAt,
 	}
 }
 

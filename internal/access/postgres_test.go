@@ -325,3 +325,23 @@ func TestListBySystem(t *testing.T) {
 		t.Fatalf("got %+v err %v", list, err)
 	}
 }
+
+func TestCompanyWithoutRUCCanSignIn(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	repo := NewPostgresRepository(w.pool)
+	if _, err := repo.Assign(ctx, Access{UserID: w.user, SystemID: w.pulso, TenantID: w.acme, Role: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.pool.Exec(ctx, `UPDATE tenants SET ruc = NULL WHERE id = $1`, w.acme); err != nil {
+		t.Fatal(err)
+	}
+	g, err := repo.Resolve(ctx, w.user, "pulso", "")
+	if err != nil || g.TenantRUC != "" || g.TenantID != w.acme {
+		t.Fatalf("got %+v err %v", g, err)
+	}
+	options, err := repo.Options(ctx, w.user, "pulso")
+	if err != nil || len(options) != 1 || options[0].RUC != "" {
+		t.Fatalf("got %+v err %v", options, err)
+	}
+}

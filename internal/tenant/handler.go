@@ -36,8 +36,8 @@ func (h *Handler) RegisterService(mux *http.ServeMux, service httpx.Middleware) 
 }
 
 var failures = map[error]httpx.Failure{
-	ErrInvalidRUC:           {Status: http.StatusBadRequest, Message: "The RUC must have 11 digits."},
-	ErrInvalidLegalName:     {Status: http.StatusBadRequest, Message: "The legal name is required."},
+	ErrInvalidRUC:           {Status: http.StatusBadRequest, Message: "The RUC, when given, must have 11 digits."},
+	ErrInvalidLegalName:     {Status: http.StatusBadRequest, Message: "The name is required."},
 	ErrInvalidID:            {Status: http.StatusBadRequest, Message: "Invalid id."},
 	ErrInvalidUbigeo:        {Status: http.StatusBadRequest, Message: "The ubigeo must have 6 digits."},
 	ErrInvalidEmail:         {Status: http.StatusBadRequest, Message: "The email is not valid."},
@@ -45,6 +45,8 @@ var failures = map[error]httpx.Failure{
 	ErrInvalidLogo:          {Status: http.StatusBadRequest, Message: "The logo must be a file id."},
 	ErrFieldTooLong:         {Status: http.StatusBadRequest, Message: "A field is too long."},
 	ErrRUCTaken:             {Status: http.StatusConflict, Message: "A tenant with that RUC already exists."},
+	ErrRUCImmutable:         {Status: http.StatusConflict, Message: "The RUC of a company that already has one cannot change."},
+	ErrRUCRequired:          {Status: http.StatusConflict, Message: "This system needs the company to have a RUC."},
 	ErrClientNotFound:       {Status: http.StatusNotFound, Message: "Client not found."},
 	ErrTenantNotFound:       {Status: http.StatusNotFound, Message: "Tenant not found."},
 	ErrSystemNotFound:       {Status: http.StatusNotFound, Message: "System not found."},
@@ -123,6 +125,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		RUC        string `json:"ruc"`
 		LegalName  string `json:"legal_name"`
 		TradeName  string `json:"trade_name"`
 		Address    string `json:"address"`
@@ -139,7 +142,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, err := h.svc.Update(r.Context(), r.PathValue("id"), UpdateInput{
-		LegalName: req.LegalName, TradeName: req.TradeName, Address: req.Address, Department: req.Department, Province: req.Province,
+		RUC: req.RUC, LegalName: req.LegalName, TradeName: req.TradeName, Address: req.Address, Department: req.Department, Province: req.Province,
 		District: req.District, Ubigeo: req.Ubigeo, Phone: req.Phone, Email: req.Email, LogoFileID: req.LogoFileID,
 	})
 	if err != nil {

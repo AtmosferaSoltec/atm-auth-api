@@ -71,7 +71,7 @@ func (r *PostgresRepository) RemoveByID(ctx context.Context, id string) error {
 
 func (r *PostgresRepository) Options(ctx context.Context, userID, systemCode string) ([]Option, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT t.id, t.ruc, COALESCE(NULLIF(t.trade_name, ''), t.legal_name), a.role
+		SELECT t.id, COALESCE(t.ruc, ''), COALESCE(NULLIF(t.trade_name, ''), t.legal_name), a.role
 		FROM access a
 		JOIN systems s         ON s.id = a.system_id
 		JOIN tenants t         ON t.id = a.tenant_id
@@ -109,7 +109,7 @@ func (r *PostgresRepository) MarkUsed(ctx context.Context, userID, systemID, ten
 func (r *PostgresRepository) Resolve(ctx context.Context, userID, systemCode, tenantID string) (Grant, error) {
 	var g Grant
 	err := r.pool.QueryRow(ctx, `
-		SELECT a.system_id, s.code, a.tenant_id, a.role, a.manage_users, s.session_mode, t.ruc, u.dni, u.full_name, t.client_id, c.name
+		SELECT a.system_id, s.code, a.tenant_id, a.role, a.manage_users, s.session_mode, COALESCE(t.ruc, ''), u.dni, u.full_name, t.client_id, c.name
 		FROM access a
 		JOIN users u          ON u.id = a.user_id
 		JOIN systems s        ON s.id = a.system_id

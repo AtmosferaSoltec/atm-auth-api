@@ -39,6 +39,7 @@ func TestServiceTenantsRoute(t *testing.T) {
 	repo := &systemsRepo{fakeRepo: newFakeRepo(), items: []Tenant{
 		{ID: "t1", RUC: "10471983751", LegalName: "TASAYCO HERNANDEZ JESUS", TradeName: "La Vendimia", ClientID: "c1", ClientName: "Familia Tasayco", Status: StatusActive},
 		{ID: "t2", RUC: "20612480070", LegalName: "LOGISTICA EXPRESS S.A.C.", Status: StatusActive},
+		{ID: "t3", LegalName: "Gimnasio de Juan", Status: StatusActive},
 	}}
 	verifier := tokenVerifier{
 		"service-token": {Role: "service", System: "lavendimia", Subject: "system:lavendimia"},
@@ -70,13 +71,16 @@ func TestServiceTenantsRoute(t *testing.T) {
 		var body struct {
 			Items []map[string]string `json:"items"`
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Items) != 2 {
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Items) != 3 {
 			t.Fatalf("got %s err %v", rec.Body, err)
 		}
 		first := body.Items[0]
 		if first["ruc"] != "10471983751" || first["legal_name"] != "TASAYCO HERNANDEZ JESUS" || first["display_name"] != "La Vendimia" || first["id"] != "t1" ||
 			first["client_id"] != "c1" || first["client_name"] != "Familia Tasayco" {
 			t.Fatalf("got %+v", first)
+		}
+		if ruc, ok := body.Items[2]["ruc"]; !ok || ruc != "" {
+			t.Fatalf("a company without RUC reports an empty ruc, got %+v", body.Items[2])
 		}
 		if _, leaked := first["systems"]; leaked {
 			t.Fatal("a system must not learn which other systems a customer has")

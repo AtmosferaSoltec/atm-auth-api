@@ -113,7 +113,7 @@ func (r *PostgresRepository) Delete(ctx context.Context, id string) error {
 // tenantsByClient returns the companies grouped by client id, ordered by name. An empty clientID returns them all.
 func (r *PostgresRepository) tenantsByClient(ctx context.Context, clientID string) (map[string][]TenantRef, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT client_id, id, ruc, coalesce(nullif(btrim(trade_name), ''), legal_name)
+		`SELECT client_id, id, coalesce(ruc, ''), coalesce(nullif(btrim(trade_name), ''), legal_name)
 		   FROM tenants
 		  WHERE $1 = '' OR client_id::text = $1
 		  ORDER BY lower(coalesce(nullif(btrim(trade_name), ''), legal_name)), id`, clientID)

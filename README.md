@@ -60,14 +60,14 @@ go run ./cmd/api
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/systems` | List the systems. They are not created from the console: see "Systems and roles are defined in code" below |
+| GET | `/systems` | List the systems (each with `requires_ruc`). They are not created from the console: see "Systems and roles are defined in code" below |
 | POST | `/systems/{id}/secret` | Generate (or regenerate) the system's secret. Returns `{client_id, client_secret}` once; the old secret stops working at once |
 | DELETE | `/systems/{id}/secret` | Revoke the system's secret. Tokens already issued last until they expire |
 | PUT | `/systems/{id}/session` | How a system treats its users' sessions. Body: `{"mode": "persistent" \| "temporary"}`. **Persistent** remembers the user: the session lasts `REFRESH_TOKEN_TTL` (90 days by default) without use. **Temporary** does not: the client keeps no session after the tab closes, and the server only bounds it with `TEMPORARY_REFRESH_TTL` (12 h by default). Open sessions pick the change up at their next refresh |
-| POST, GET | `/tenants` | Create and list tenants (RUC, legal name, trade name) |
+| POST, GET | `/tenants` | Create and list tenants. Create body: `{legal_name, trade_name, ruc, client_id}`; only `legal_name` is required (for a person, their own name or the gym's). The **RUC is optional**: missing, empty or blank means the company has none (stored as NULL, unique only when present). `400 invalid_ruc` if given but not 11 digits, `409 ruc_taken` if another company has it. Every tenant JSON returns `"ruc": ""` when it has none (never null) |
 | GET | `/tenants/{id}` | One tenant. Tenants (here and in the list) carry `systems`: the systems enabled for them |
-| PUT | `/tenants/{id}` | Edit the company profile. Body (all fields are sent; an empty one is cleared, only `legal_name` is required): `{legal_name, trade_name, address, department, province, district, ubigeo, phone, email, logo_file_id}`. `ubigeo` is 6 digits, `logo_file_id` the id of the logo in atm-storage-api (never a URL). The RUC cannot change. Systems read this data instead of keeping their own copy |
-| POST | `/tenants/{id}/systems` | Enable a system for a tenant. Body: `{"system_id"}` |
+| PUT | `/tenants/{id}` | Edit the company profile. Body (all fields are sent; an empty one is cleared, only `legal_name` is required): `{legal_name, trade_name, address, department, province, district, ubigeo, phone, email, logo_file_id}`. `ubigeo` is 6 digits, `logo_file_id` the id of the logo in atm-storage-api (never a URL). `ruc` may also be sent: a company that already has one keeps it (sending the same value is fine, a different one is `409 ruc_immutable`, an empty one changes nothing); a company **without** one may set it once. Systems read this data instead of keeping their own copy |
+| POST | `/tenants/{id}/systems` | Enable a system for a tenant. Body: `{"system_id"}`. `409 ruc_required` if the system has `requires_ruc` and the tenant has no RUC (Pulso does not) |
 | DELETE | `/tenants/{id}/systems/{system_id}` | Disable a system for a tenant. Removes the access its users had in that system (accounts stay) |
 | POST, GET | `/users` | Create and list users. Body: `{dni, full_name}`. The DNI is always the initial password and must be changed at first login; a `password` field is rejected |
 | POST | `/users/{id}/reset-password` | Back to the DNI, change required, sessions ended |
@@ -113,12 +113,12 @@ Presenting a refresh token that was already used revokes its whole session.
 
 ## Systems and roles are defined in code
 
-The superadmin does not create systems from the console: the catalog lives in the migrations. To add a system, add it to a new migration like `migrations/0012_seed_systems.sql` (`INSERT ... ON CONFLICT (code) DO NOTHING`) and its starting roles to one like `0013_seed_system_roles.sql`, then deploy. Both are idempotent: a system or role that already exists keeps what the console set (session mode, secret, descriptions) and nothing is ever deleted. Secrets are never seeded; generate them per environment from the console. Today: `pulso` (roles `admin`, `receptionist`) and `lavendimia` (`admin`, `cashier`).
+The superadmin does not create systems from the console: the catalog lives in the migrations. To add a system, add it to a new migration like `migrations/0012_seed_systems.sql` (`INSERT ... ON CONFLICT (code) DO NOTHING`) and its starting roles to one like `0013_seed_system_roles.sql`, then deploy. Both are idempotent: a system or role that already exists keeps what the console set (session mode, secret, descriptions) and nothing is ever deleted. Secrets are never seeded; generate them per environment from the console. `systems.requires_ruc` (true by default, false for `pulso`) says whether a system can only be enabled for companies that have a RUC, as invoicing systems need. Today: `pulso` (roles `admin`, `receptionist`) and `lavendimia` (`admin`, `cashier`).
 
 ## Access model
 
 - A **client** is the real customer who owns one or more companies; a **tenant** is one of those companies (RUC, legal name, trade name). Systems use the client to decide what the companies of one owner share (in Pulso, the client is the organization and each company is a gym).
-- A **tenant** is a customer company (RUC, legal name, trade name). A **system** is a product (Olympus, Pulso...).
+- A **tenant** is a customer company (legal name, trade name and, optionally, a RUC; a gym run by one person may have none). A **system** is a product (Olympus, Pulso...).
 - `tenant_systems`: which systems a tenant has contracted.
 - `access`: which user enters which system, in which tenant, with which role. `UNIQUE (user_id, system_id, tenant_id)`: a person can work for **several companies in the same system** (for example the owner of two businesses), once each. Only the superadmin gives a person a second company: an owner cannot add someone who already belongs to another company of the system (`409`).
 - The token always names **one** company (`tenant`). Login enters the company used last, or else the first one given; the person switches with `POST /v1/refresh` and a `tenant_id`, and each session remembers its company so a refresh keeps it. Systems keep reading `tenant` from the token and need no change. `/v1/tenant/members` acts on the company of the token.

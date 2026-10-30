@@ -22,6 +22,8 @@ type System struct {
 	Status string
 	// SessionMode is SessionPersistent or SessionTemporary.
 	SessionMode string
+	// RequiresRUC says whether the system can only be enabled for companies that have a RUC.
+	RequiresRUC bool
 	// HasSecret says whether the system has a secret to ask for service tokens. The secret itself is never exposed.
 	HasSecret        bool
 	SecretCreatedAt  *time.Time

@@ -130,3 +130,23 @@ func TestMigrationGivesEveryExistingCompanyItsOwnClient(t *testing.T) {
 		t.Fatalf("got %d clients err %v", clients, err)
 	}
 }
+
+func TestClientListsCompaniesWithoutRUC(t *testing.T) {
+	ctx := context.Background()
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
+	owner, err := repo.Create(ctx, "Juan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenants (legal_name, client_id) VALUES ('Gimnasio de Juan', $1)`, owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetByID(ctx, owner.ID)
+	if err != nil || len(got.Tenants) != 1 || got.Tenants[0].RUC != "" || got.Tenants[0].DisplayName != "Gimnasio de Juan" {
+		t.Fatalf("got %+v err %v", got, err)
+	}
+	if _, err := repo.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

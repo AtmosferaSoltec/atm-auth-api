@@ -12,6 +12,8 @@ var (
 	ErrInvalidLogo          = errors.New("invalid_logo")
 	ErrFieldTooLong         = errors.New("field_too_long")
 	ErrRUCTaken             = errors.New("ruc_taken")
+	ErrRUCImmutable         = errors.New("ruc_immutable")
+	ErrRUCRequired          = errors.New("ruc_required")
 	ErrClientNotFound       = errors.New("client_not_found")
 	ErrTenantNotFound       = errors.New("tenant_not_found")
 	ErrSystemNotFound       = errors.New("system_not_found")

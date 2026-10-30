@@ -20,7 +20,7 @@ func (f *fakeRepo) Create(_ context.Context, t Tenant) (Tenant, error) {
 	if _, ok := f.byRUC[t.RUC]; ok {
 		return Tenant{}, ErrRUCTaken
 	}
-	t.ID = "00000000-0000-0000-0000-0" + t.RUC // 12 digits after the last dash: a valid UUID
+	t.ID = "00000000-0000-0000-0000-0" + strings.Repeat("0", 11-len(t.RUC)) + t.RUC // 12 digits after the last dash: a valid UUID
 	f.byRUC[t.RUC] = t
 	return t, nil
 }
@@ -37,8 +37,12 @@ func (f *fakeRepo) GetByID(_ context.Context, id string) (Tenant, error) {
 func (f *fakeRepo) Update(_ context.Context, t Tenant) error {
 	for ruc, current := range f.byRUC {
 		if current.ID == t.ID {
-			t.RUC, t.Status = current.RUC, current.Status
-			f.byRUC[ruc] = t
+			if current.RUC != "" || t.RUC == "" {
+				t.RUC = current.RUC
+			}
+			t.Status = current.Status
+			delete(f.byRUC, ruc)
+			f.byRUC[t.RUC] = t
 			return nil
 		}
 	}
@@ -78,6 +82,8 @@ func TestCreate(t *testing.T) {
 	}{
 		{"ok", CreateInput{RUC: "20123456789", LegalName: "Acme SAC", TradeName: "Acme"}, nil},
 		{"ok without trade name", CreateInput{RUC: "20123456789", LegalName: "Acme SAC"}, nil},
+		{"ok without ruc", CreateInput{LegalName: "Gimnasio de Juan"}, nil},
+		{"blank ruc is no ruc", CreateInput{RUC: "   ", LegalName: "Gimnasio de Juan"}, nil},
 		{"short ruc", CreateInput{RUC: "2012345678", LegalName: "Acme"}, ErrInvalidRUC},
 		{"ruc with letters", CreateInput{RUC: "2012345678a", LegalName: "Acme"}, ErrInvalidRUC},
 		{"empty legal name", CreateInput{RUC: "20123456789", LegalName: "  "}, ErrInvalidLegalName},
@@ -196,5 +202,40 @@ func TestUpdateProfile(t *testing.T) {
 	}
 	if _, err := svc.Update(ctx, missingID, full); !errors.Is(err, ErrTenantNotFound) {
 		t.Errorf("got %v", err)
+	}
+}
+
+func TestRUCIsOptionalAndSetOnce(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo())
+	created, err := svc.Create(ctx, CreateInput{LegalName: "Gimnasio de Juan"})
+	if err != nil || created.RUC != "" {
+		t.Fatalf("got %+v err %v", created, err)
+	}
+	in := UpdateInput{LegalName: "Gimnasio de Juan"}
+
+	if updated, err := svc.Update(ctx, created.ID, in); err != nil || updated.RUC != "" {
+		t.Fatalf("an update without RUC leaves it unset: %+v err %v", updated, err)
+	}
+	in.RUC = "123"
+	if _, err := svc.Update(ctx, created.ID, in); !errors.Is(err, ErrInvalidRUC) {
+		t.Fatalf("got %v", err)
+	}
+	in.RUC = "20123456789"
+	updated, err := svc.Update(ctx, created.ID, in)
+	if err != nil || updated.RUC != "20123456789" {
+		t.Fatalf("a company without RUC may set it once: %+v err %v", updated, err)
+	}
+	in.RUC = ""
+	if kept, err := svc.Update(ctx, created.ID, in); err != nil || kept.RUC != "20123456789" {
+		t.Fatalf("an empty RUC never clears it: %+v err %v", kept, err)
+	}
+	in.RUC = "20123456789"
+	if _, err := svc.Update(ctx, created.ID, in); err != nil {
+		t.Fatalf("sending the same RUC is fine: %v", err)
+	}
+	in.RUC = "20999999999"
+	if _, err := svc.Update(ctx, created.ID, in); !errors.Is(err, ErrRUCImmutable) {
+		t.Fatalf("a company that has a RUC cannot change it, got %v", err)
 	}
 }

@@ -17,11 +17,11 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const columns = "id, code, name, status, session_mode, secret_hash IS NOT NULL, secret_created_at, secret_last_used_at, created_at, updated_at"
+const columns = "id, code, name, status, session_mode, requires_ruc, secret_hash IS NOT NULL, secret_created_at, secret_last_used_at, created_at, updated_at"
 
 func scan(row pgx.Row) (System, error) {
 	var s System
-	err := row.Scan(&s.ID, &s.Code, &s.Name, &s.Status, &s.SessionMode, &s.HasSecret, &s.SecretCreatedAt, &s.SecretLastUsedAt, &s.CreatedAt, &s.UpdatedAt)
+	err := row.Scan(&s.ID, &s.Code, &s.Name, &s.Status, &s.SessionMode, &s.RequiresRUC, &s.HasSecret, &s.SecretCreatedAt, &s.SecretLastUsedAt, &s.CreatedAt, &s.UpdatedAt)
 	return s, err
 }
 

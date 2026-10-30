@@ -271,3 +271,80 @@ func TestPostgresUpdateProfile(t *testing.T) {
 		t.Fatal("the database must reject a malformed ubigeo")
 	}
 }
+
+func TestPostgresTenantWithoutRUC(t *testing.T) {
+	ctx := context.Background()
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
+
+	one, err := repo.Create(ctx, Tenant{LegalName: "Gimnasio de Juan", Status: StatusActive})
+	if err != nil || one.RUC != "" {
+		t.Fatalf("got %+v err %v", one, err)
+	}
+	// Two companies may both have no RUC: it is unique only when present, and nothing stores an empty string.
+	two, err := repo.Create(ctx, Tenant{RUC: "", LegalName: "Gimnasio de Ana", Status: StatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nulls int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM tenants WHERE ruc IS NULL`).Scan(&nulls); err != nil || nulls != 2 {
+		t.Fatalf("the absent RUC must be NULL, got %d err %v", nulls, err)
+	}
+	list, err := repo.List(ctx)
+	if err != nil || len(list) != 2 || list[0].RUC != "" {
+		t.Fatalf("a listing must read NULL as empty: %+v err %v", list, err)
+	}
+
+	// It may be set once, even to a RUC no one else has.
+	one.RUC = "20123456789"
+	if err := repo.Update(ctx, one); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.GetByID(ctx, one.ID); got.RUC != "20123456789" {
+		t.Fatalf("got %+v", got)
+	}
+	// ...but never to one that is taken, and never changed afterwards.
+	two.RUC = "20123456789"
+	if err := repo.Update(ctx, two); !errors.Is(err, ErrRUCTaken) {
+		t.Fatalf("got %v", err)
+	}
+	one.RUC = "20999999999"
+	if err := repo.Update(ctx, one); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.GetByID(ctx, one.ID); got.RUC != "20123456789" {
+		t.Fatalf("the stored RUC must not change: %+v", got)
+	}
+}
+
+func TestEnableSystemThatRequiresRUC(t *testing.T) {
+	ctx := context.Background()
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
+	billing := platform.SeedSystem(t, pool, "lavendimia", "La Vendimia") // requires a RUC by default
+	pulso := platform.SeedSystem(t, pool, "pulso", "Pulso")
+	if _, err := pool.Exec(ctx, `UPDATE systems SET requires_ruc = false WHERE id = $1`, pulso); err != nil {
+		t.Fatal(err)
+	}
+	gym, err := repo.Create(ctx, Tenant{LegalName: "Gimnasio de Juan", Status: StatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.EnableSystem(ctx, gym.ID, billing); !errors.Is(err, ErrRUCRequired) {
+		t.Fatalf("a company without RUC cannot get a system that needs one, got %v", err)
+	}
+	if err := repo.EnableSystem(ctx, gym.ID, pulso); err != nil {
+		t.Fatalf("Pulso works without a RUC: %v", err)
+	}
+	if err := repo.EnableSystem(ctx, missingID, pulso); !errors.Is(err, ErrTenantNotFound) {
+		t.Fatalf("got %v", err)
+	}
+	gym.RUC = "20123456789"
+	if err := repo.Update(ctx, gym); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.EnableSystem(ctx, gym.ID, billing); err != nil {
+		t.Fatalf("once it has a RUC the system can be enabled: %v", err)
+	}
+}
