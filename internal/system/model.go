@@ -1,10 +1,6 @@
 package system
 
-import (
-	"regexp"
-	"strings"
-	"time"
-)
+import "time"
 
 const (
 	StatusActive   = "active"
@@ -18,8 +14,6 @@ const (
 	// The server only bounds it with a fixed ceiling (TEMPORARY_REFRESH_TTL).
 	SessionTemporary = "temporary"
 )
-
-var codePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 type System struct {
 	ID     string
@@ -35,10 +29,6 @@ type System struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
-
-func validCode(code string) bool { return codePattern.MatchString(code) }
-
-func normalizeName(name string) string { return strings.Join(strings.Fields(name), " ") }
 
 // normalizeSession validates a session mode. An empty one means persistent.
 func normalizeSession(mode string) (string, error) {

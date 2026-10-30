@@ -19,20 +19,14 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 
 // Register mounts the superadmin routes. admin must reject anyone who is not the superadmin.
 func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
-	mux.Handle("POST /v1/admin/systems", admin(http.HandlerFunc(h.create)))
 	mux.Handle("GET /v1/admin/systems", admin(http.HandlerFunc(h.list)))
 	mux.Handle("PUT /v1/admin/systems/{id}/session", admin(http.HandlerFunc(h.updateSession)))
-	mux.Handle("DELETE /v1/admin/systems/{id}", admin(http.HandlerFunc(h.delete)))
 }
 
 var failures = map[error]httpx.Failure{
-	ErrInvalidCode:        {Status: http.StatusBadRequest, Message: "The code must be lowercase letters, digits, '-' or '_', starting with a letter."},
-	ErrInvalidName:        {Status: http.StatusBadRequest, Message: "The name is required."},
-	ErrCodeTaken:          {Status: http.StatusConflict, Message: "A system with that code already exists."},
 	ErrInvalidID:          {Status: http.StatusBadRequest, Message: "Invalid id."},
 	ErrInvalidSessionMode: {Status: http.StatusBadRequest, Message: "The session mode must be 'persistent' or 'temporary'."},
 	ErrSystemNotFound:     {Status: http.StatusNotFound, Message: "System not found."},
-	ErrCodeMismatch:       {Status: http.StatusBadRequest, Message: "The confirmation code does not match the system code."},
 }
 
 type systemJSON struct {
@@ -57,24 +51,6 @@ func toJSON(s System) systemJSON {
 	}
 }
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Code        string `json:"code"`
-		Name        string `json:"name"`
-		SessionMode string `json:"session_mode"`
-	}
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
-		return
-	}
-	s, err := h.svc.Create(r.Context(), CreateInput{Code: req.Code, Name: req.Name, SessionMode: req.SessionMode})
-	if err != nil {
-		httpx.Fail(w, r, h.log, err, failures)
-		return
-	}
-	httpx.JSON(w, http.StatusCreated, toJSON(s))
-}
-
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	systems, err := h.svc.List(r.Context())
 	if err != nil {
@@ -86,15 +62,6 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toJSON(s))
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
-}
-
-// delete removes the system named by the path. The system's code must be sent as the `confirm` query parameter.
-func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Delete(r.Context(), r.PathValue("id"), r.URL.Query().Get("confirm")); err != nil {
-		httpx.Fail(w, r, h.log, err, failures)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) updateSession(w http.ResponseWriter, r *http.Request) {

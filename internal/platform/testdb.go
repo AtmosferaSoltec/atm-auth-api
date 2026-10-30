@@ -29,7 +29,22 @@ func NewTestPool(t *testing.T) *pgxpool.Pool {
 	if err := Migrate(ctx, pool, migrations.Files); err != nil {
 		t.Fatal(err)
 	}
+	// The migrations register the real catalog of systems; each test builds the one it needs with SeedSystem.
+	if _, err := pool.Exec(ctx, "DELETE FROM systems"); err != nil {
+		t.Fatal(err)
+	}
 	return pool
+}
+
+// SeedSystem registers a system for a test and returns its id.
+func SeedSystem(t *testing.T, pool *pgxpool.Pool, code, name string) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO systems (code, name) VALUES ($1, $2) RETURNING id`, code, name).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 // SeedRoles adds role names to the catalog of a system, so tests can give them to people.

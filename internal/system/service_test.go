@@ -11,15 +11,6 @@ type fakeRepo struct{ byCode map[string]System }
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{byCode: map[string]System{}} }
 
-func (f *fakeRepo) Create(_ context.Context, s System) (System, error) {
-	if _, ok := f.byCode[s.Code]; ok {
-		return System{}, ErrCodeTaken
-	}
-	s.ID = "id-" + s.Code
-	f.byCode[s.Code] = s
-	return s, nil
-}
-
 func (f *fakeRepo) List(context.Context) ([]System, error) {
 	var out []System
 	for _, s := range f.byCode {
@@ -46,16 +37,6 @@ func (f *fakeRepo) GetByID(_ context.Context, id string) (System, error) {
 	return System{}, ErrSystemNotFound
 }
 
-func (f *fakeRepo) Delete(_ context.Context, id string) error {
-	for code, s := range f.byCode {
-		if s.ID == id {
-			delete(f.byCode, code)
-			return nil
-		}
-	}
-	return ErrSystemNotFound
-}
-
 func (f *fakeRepo) UpdateSession(_ context.Context, id, mode string) (System, error) {
 	for code, s := range f.byCode {
 		if s.ID == id {
@@ -67,99 +48,20 @@ func (f *fakeRepo) UpdateSession(_ context.Context, id, mode string) (System, er
 	return System{}, ErrSystemNotFound
 }
 
-func TestCreate(t *testing.T) {
-	ctx := context.Background()
-	tests := []struct {
-		name string
-		in   CreateInput
-		want error
-	}{
-		{"ok", CreateInput{Code: "olympus", Name: "Olympus"}, nil},
-		{"code with dash", CreateInput{Code: "atm-console", Name: "Console"}, nil},
-		{"uppercase code", CreateInput{Code: "Olympus", Name: "Olympus"}, ErrInvalidCode},
-		{"code with space", CreateInput{Code: "my sys", Name: "X"}, ErrInvalidCode},
-		{"code starting with digit", CreateInput{Code: "1sys", Name: "X"}, ErrInvalidCode},
-		{"empty name", CreateInput{Code: "nova", Name: " "}, ErrInvalidName},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s, err := NewService(newFakeRepo()).Create(ctx, tt.in)
-			if !errors.Is(err, tt.want) {
-				t.Fatalf("got %v, want %v", err, tt.want)
-			}
-			if err == nil && s.Status != StatusActive {
-				t.Fatalf("status %q", s.Status)
-			}
-		})
-	}
-
-	t.Run("duplicate code", func(t *testing.T) {
-		svc := NewService(newFakeRepo())
-		in := CreateInput{Code: "pulso", Name: "Pulso"}
-		_, _ = svc.Create(ctx, in)
-		if _, err := svc.Create(ctx, in); !errors.Is(err, ErrCodeTaken) {
-			t.Fatalf("got %v", err)
-		}
-	})
-}
-
 func TestList(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(newFakeRepo())
-	_, _ = svc.Create(ctx, CreateInput{Code: "pulso", Name: "Pulso"})
-	_, _ = svc.Create(ctx, CreateInput{Code: "nova", Name: "Nova"})
-	got, err := svc.List(ctx)
+	repo := newFakeRepo()
+	repo.byCode["pulso"] = System{ID: "id-pulso", Code: "pulso", Name: "Pulso"}
+	repo.byCode["nova"] = System{ID: "id-nova", Code: "nova", Name: "Nova"}
+	got, err := NewService(repo).List(ctx)
 	if err != nil || len(got) != 2 || got[0].Code != "nova" {
 		t.Fatalf("got %+v err %v", got, err)
-	}
-}
-
-func TestDelete(t *testing.T) {
-	ctx := context.Background()
-	const id = "11111111-1111-1111-1111-111111111111"
-	seed := func() *Service {
-		repo := newFakeRepo()
-		repo.byCode["olympus"] = System{ID: id, Code: "olympus", Name: "Olympus"}
-		return NewService(repo)
-	}
-
-	tests := []struct {
-		name    string
-		id      string
-		confirm string
-		want    error
-	}{
-		{"confirmed", id, "olympus", nil},
-		{"wrong code", id, "pulso", ErrCodeMismatch},
-		{"empty code", id, "", ErrCodeMismatch},
-		{"different case", id, "Olympus", ErrCodeMismatch},
-		{"unknown system", "22222222-2222-2222-2222-222222222222", "olympus", ErrSystemNotFound},
-		{"not a uuid", "olympus", "olympus", ErrInvalidID},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			svc := seed()
-			if err := svc.Delete(ctx, tt.id, tt.confirm); !errors.Is(err, tt.want) {
-				t.Fatalf("got %v, want %v", err, tt.want)
-			}
-			list, _ := svc.List(ctx)
-			if wantLeft := tt.want != nil; wantLeft != (len(list) == 1) {
-				t.Fatalf("systems left: %d", len(list))
-			}
-		})
 	}
 }
 
 func TestSessionPolicy(t *testing.T) {
 	ctx := context.Background()
 	const id = "11111111-1111-1111-1111-111111111111"
-
-	t.Run("a new system is persistent by default", func(t *testing.T) {
-		s, err := NewService(newFakeRepo()).Create(ctx, CreateInput{Code: "olympus", Name: "Olympus"})
-		if err != nil || s.SessionMode != SessionPersistent {
-			t.Fatalf("got %+v err %v", s, err)
-		}
-	})
 
 	tests := []struct {
 		name string
@@ -172,12 +74,6 @@ func TestSessionPolicy(t *testing.T) {
 		{"minutes are not a mode", "30", ErrInvalidSessionMode},
 	}
 	for _, tt := range tests {
-		t.Run("create "+tt.name, func(t *testing.T) {
-			s, err := NewService(newFakeRepo()).Create(ctx, CreateInput{Code: "olympus", Name: "Olympus", SessionMode: tt.mode})
-			if !errors.Is(err, tt.want) || (err == nil && s.SessionMode != tt.mode) {
-				t.Fatalf("got %+v err %v", s, err)
-			}
-		})
 		t.Run("update "+tt.name, func(t *testing.T) {
 			repo := newFakeRepo()
 			repo.byCode["olympus"] = System{ID: id, Code: "olympus", Name: "Olympus", SessionMode: SessionPersistent}

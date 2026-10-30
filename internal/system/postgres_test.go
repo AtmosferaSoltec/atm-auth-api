@@ -3,75 +3,101 @@ package system
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"testing"
+	"testing/fstest"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
+	"github.com/AtmosferaSoltec/atm-auth-api/migrations"
 )
 
 func TestPostgresRepository(t *testing.T) {
 	ctx := context.Background()
-	repo := NewPostgresRepository(platform.NewTestPool(t))
+	pool := platform.NewTestPool(t)
+	repo := NewPostgresRepository(pool)
 
-	created, err := repo.Create(ctx, System{Code: "olympus", Name: "Olympus", Status: StatusActive})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created.ID == "" {
-		t.Fatal("missing id")
-	}
-	if _, err := repo.Create(ctx, System{Code: "olympus", Name: "Dup", Status: StatusActive}); !errors.Is(err, ErrCodeTaken) {
-		t.Fatalf("got %v", err)
-	}
-	_, _ = repo.Create(ctx, System{Code: "nova", Name: "Nova", Status: StatusActive})
+	olympusID := platform.SeedSystem(t, pool, "olympus", "Olympus")
+	platform.SeedSystem(t, pool, "nova", "Nova")
 
 	list, err := repo.List(ctx)
 	if err != nil || len(list) != 2 || list[0].Code != "nova" {
 		t.Fatalf("got %+v err %v", list, err)
 	}
+	if list[0].Status != StatusActive || list[0].SessionMode != SessionPersistent {
+		t.Fatalf("a registered system starts active and persistent: %+v", list[0])
+	}
 
 	got, err := repo.GetByCode(ctx, "olympus")
-	if err != nil || got.ID != created.ID {
+	if err != nil || got.ID != olympusID {
 		t.Fatalf("got %+v err %v", got, err)
+	}
+	if byID, err := repo.GetByID(ctx, olympusID); err != nil || byID.Code != "olympus" {
+		t.Fatalf("got %+v err %v", byID, err)
 	}
 	if _, err := repo.GetByCode(ctx, "missing"); !errors.Is(err, ErrSystemNotFound) {
 		t.Fatalf("got %v", err)
 	}
+	if _, err := repo.GetByID(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, ErrSystemNotFound) {
+		t.Fatalf("got %v", err)
+	}
 }
 
-func TestPostgresDeleteCascades(t *testing.T) {
+// The migrations register the systems of the platform, and running them again changes nothing about a system that
+// already exists: its secret, session policy and name stay as the console left them.
+func TestMigrationRegistersTheSystemsWithoutTouchingExistingOnes(t *testing.T) {
 	ctx := context.Background()
 	pool := platform.NewTestPool(t)
-	repo := NewPostgresRepository(pool)
 
-	sys, err := repo.Create(ctx, System{Code: "olympus", Name: "Olympus", Status: StatusActive})
+	if _, err := pool.Exec(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
+		t.Fatal(err)
+	}
+	before := fstest.MapFS{}
+	all, err := fs.Glob(migrations.Files, "*.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var tenantID string
-	if err := pool.QueryRow(ctx, `WITH c AS (INSERT INTO clients (name) VALUES ('Gym SAC') RETURNING id) INSERT INTO tenants (ruc, legal_name, client_id) SELECT '20123456789', 'Gym SAC', id FROM c RETURNING id`).Scan(&tenantID); err != nil {
-		t.Fatal(err)
+	for _, name := range all {
+		if name == "0012_seed_systems.sql" {
+			continue
+		}
+		data, err := fs.ReadFile(migrations.Files, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[name] = &fstest.MapFile{Data: data}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant_systems (tenant_id, system_id) VALUES ($1, $2)`, tenantID, sys.ID); err != nil {
+	if err := platform.Migrate(ctx, pool, before); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := repo.GetByID(ctx, sys.ID)
-	if err != nil || got.Code != "olympus" {
-		t.Fatalf("got %+v err %v", got, err)
-	}
-	if err := repo.Delete(ctx, sys.ID); err != nil {
+	// A system that already lives in production, customized from the console.
+	if _, err := pool.Exec(ctx, `INSERT INTO systems (code, name, session_mode, secret_hash) VALUES ('lavendimia', 'Nombre propio', 'temporary', 'hash')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.GetByID(ctx, sys.ID); !errors.Is(err, ErrSystemNotFound) {
-		t.Fatalf("got %v", err)
-	}
-	if err := repo.Delete(ctx, sys.ID); !errors.Is(err, ErrSystemNotFound) {
-		t.Fatalf("second delete: got %v", err)
+	if err := platform.Migrate(ctx, pool, migrations.Files); err != nil {
+		t.Fatal(err)
 	}
 
-	var left int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM tenant_systems WHERE system_id = $1`, sys.ID).Scan(&left); err != nil || left != 0 {
-		t.Fatalf("tenant_systems left: %d err %v", left, err)
+	rows, err := pool.Query(ctx, `SELECT code, name, session_mode, secret_hash IS NOT NULL FROM systems ORDER BY code`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	type row struct {
+		code, name, mode string
+		secret           bool
+	}
+	var got []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.code, &r.name, &r.mode, &r.secret); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, r)
+	}
+	want := []row{{"lavendimia", "Nombre propio", "temporary", true}, {"pulso", "Pulso", "persistent", false}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
 
@@ -80,15 +106,15 @@ func TestPostgresSessionPolicy(t *testing.T) {
 	pool := platform.NewTestPool(t)
 	repo := NewPostgresRepository(pool)
 
-	created, err := repo.Create(ctx, System{Code: "pulso", Name: "Pulso", Status: StatusActive, SessionMode: SessionTemporary})
-	if err != nil || created.SessionMode != SessionTemporary {
-		t.Fatalf("got %+v err %v", created, err)
-	}
-	updated, err := repo.UpdateSession(ctx, created.ID, SessionPersistent)
-	if err != nil || updated.SessionMode != SessionPersistent {
+	id := platform.SeedSystem(t, pool, "pulso", "Pulso")
+	updated, err := repo.UpdateSession(ctx, id, SessionTemporary)
+	if err != nil || updated.SessionMode != SessionTemporary {
 		t.Fatalf("got %+v err %v", updated, err)
 	}
-	if got, _ := repo.GetByID(ctx, created.ID); got.SessionMode != SessionPersistent {
+	if updated, err = repo.UpdateSession(ctx, id, SessionPersistent); err != nil || updated.SessionMode != SessionPersistent {
+		t.Fatalf("got %+v err %v", updated, err)
+	}
+	if got, _ := repo.GetByID(ctx, id); got.SessionMode != SessionPersistent {
 		t.Fatalf("not persisted: %+v", got)
 	}
 	if _, err := repo.UpdateSession(ctx, "00000000-0000-0000-0000-000000000000", SessionPersistent); !errors.Is(err, ErrSystemNotFound) {
@@ -105,14 +131,14 @@ func TestPostgresReportsSecret(t *testing.T) {
 	pool := platform.NewTestPool(t)
 	repo := NewPostgresRepository(pool)
 
-	created, err := repo.Create(ctx, System{Code: "olympus", Name: "Olympus", Status: StatusActive})
-	if err != nil || created.HasSecret || created.SecretCreatedAt != nil {
+	id := platform.SeedSystem(t, pool, "olympus", "Olympus")
+	if created, err := repo.GetByID(ctx, id); err != nil || created.HasSecret || created.SecretCreatedAt != nil {
 		t.Fatalf("got %+v err %v", created, err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE systems SET secret_hash = 'h', secret_created_at = now() WHERE id = $1`, created.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE systems SET secret_hash = 'h', secret_created_at = now() WHERE id = $1`, id); err != nil {
 		t.Fatal(err)
 	}
-	got, err := repo.GetByID(ctx, created.ID)
+	got, err := repo.GetByID(ctx, id)
 	if err != nil || !got.HasSecret || got.SecretCreatedAt == nil || got.SecretLastUsedAt != nil {
 		t.Fatalf("got %+v err %v", got, err)
 	}

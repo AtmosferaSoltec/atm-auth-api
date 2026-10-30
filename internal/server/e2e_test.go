@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
@@ -36,13 +38,24 @@ func (okPinger) Ping(context.Context) error { return nil }
 type e2e struct {
 	handler http.Handler
 	users   *user.Service
-	systems *system.Service
+	pool    *pgxpool.Pool
 	tenants *tenant.Service
 	access  *access.Service
 	roles   *role.Service
 }
 
 func newE2E(t *testing.T) http.Handler { return newE2EFull(t).handler }
+
+// seedSystem registers a system, as the migrations do in a real database.
+func (e *e2e) seedSystem(t *testing.T, code, name string) system.System {
+	t.Helper()
+	id := platform.SeedSystem(t, e.pool, code, name)
+	sys, err := system.NewPostgresRepository(e.pool).GetByID(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sys
+}
 
 func newE2EFull(t *testing.T) *e2e {
 	t.Helper()
@@ -90,7 +103,7 @@ func newE2EFull(t *testing.T) *e2e {
 			Members: member.NewHandler(member.NewService(member.NewPostgresRepository(pool), userRepo, usersSvc, accessSvc), log, signer),
 		}),
 		users:   usersSvc,
-		systems: systemsSvc,
+		pool:    pool,
 		tenants: tenantsSvc,
 		access:  accessSvc,
 		roles:   rolesSvc,
@@ -203,9 +216,9 @@ func TestUserFlowAcrossSystems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	olympus, _ := e.systems.Create(ctx, system.CreateInput{Code: "olympus", Name: "Olympus"})
-	pulso, _ := e.systems.Create(ctx, system.CreateInput{Code: "pulso", Name: "Pulso"})
-	_, _ = e.systems.Create(ctx, system.CreateInput{Code: "nova", Name: "Nova"})
+	olympus := e.seedSystem(t, "olympus", "Olympus")
+	pulso := e.seedSystem(t, "pulso", "Pulso")
+	e.seedSystem(t, "nova", "Nova")
 	acme, err := e.tenants.Create(ctx, tenant.CreateInput{RUC: "20123456789", LegalName: "Acme SAC", TradeName: "Acme"})
 	if err != nil {
 		t.Fatal(err)
@@ -283,7 +296,8 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 }
 
 func TestSuperadminAPIAndFirstLoginFlow(t *testing.T) {
-	h := newE2E(t)
+	e := newE2EFull(t)
+	h := e.handler
 
 	var admin struct {
 		AccessToken string `json:"access_token"`
@@ -294,7 +308,7 @@ func TestSuperadminAPIAndFirstLoginFlow(t *testing.T) {
 
 	// Every admin route rejects anonymous callers.
 	for _, route := range [][2]string{
-		{"POST", "/v1/admin/systems"}, {"GET", "/v1/admin/systems"}, {"DELETE", "/v1/admin/systems/x"}, {"GET", "/v1/admin/systems/x/roles"}, {"POST", "/v1/admin/systems/x/roles"}, {"PUT", "/v1/admin/systems/x/session"}, {"POST", "/v1/admin/systems/x/secret"}, {"DELETE", "/v1/admin/systems/x/secret"}, {"GET", "/v1/admin/systems/x/access"}, {"DELETE", "/v1/admin/tenants/x/systems/y"}, {"POST", "/v1/admin/tenants"}, {"GET", "/v1/admin/tenants"},
+		{"GET", "/v1/admin/systems"}, {"GET", "/v1/admin/systems/x/roles"}, {"POST", "/v1/admin/systems/x/roles"}, {"PUT", "/v1/admin/systems/x/session"}, {"POST", "/v1/admin/systems/x/secret"}, {"DELETE", "/v1/admin/systems/x/secret"}, {"GET", "/v1/admin/systems/x/access"}, {"DELETE", "/v1/admin/tenants/x/systems/y"}, {"POST", "/v1/admin/tenants"}, {"GET", "/v1/admin/tenants"},
 		{"POST", "/v1/admin/users"}, {"GET", "/v1/admin/users"}, {"POST", "/v1/admin/access"},
 	} {
 		if rec := call(h, route[0], route[1], "", map[string]string{}); rec.Code != http.StatusUnauthorized {
@@ -302,19 +316,16 @@ func TestSuperadminAPIAndFirstLoginFlow(t *testing.T) {
 		}
 	}
 
-	var sys, ten, usr struct {
+	var sys system.System
+	var ten, usr struct {
 		ID string `json:"id"`
 	}
-	rec = call(h, "POST", "/v1/admin/systems", adm, map[string]string{"code": "olympus", "name": "Olympus"})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create system: %d %s", rec.Code, rec.Body)
-	}
-	decode(t, rec, &sys)
-	if rec := call(h, "POST", "/v1/admin/systems", adm, map[string]string{"code": "olympus", "name": "Dup"}); rec.Code != http.StatusConflict {
-		t.Fatalf("duplicate system: %d", rec.Code)
-	}
-	if rec := call(h, "POST", "/v1/admin/systems", adm, map[string]string{"code": "Bad Code", "name": "x"}); rec.Code != http.StatusBadRequest {
-		t.Fatalf("bad system code: %d", rec.Code)
+	// Systems are registered by the migrations, not through the API: there is no route to create or delete one.
+	sys = e.seedSystem(t, "olympus", "Olympus")
+	for _, route := range [][2]string{{"POST", "/v1/admin/systems"}, {"DELETE", "/v1/admin/systems/" + sys.ID}} {
+		if rec := call(h, route[0], route[1], adm, map[string]string{"code": "other", "name": "Other"}); rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s %s must not exist: got %d", route[0], route[1], rec.Code)
+		}
 	}
 
 	// One secret per system gets a service token that works as a machine identity, and opens no admin route.
@@ -391,27 +402,6 @@ func TestSuperadminAPIAndFirstLoginFlow(t *testing.T) {
 	if rec := call(h, "PUT", "/v1/admin/systems/"+sys.ID+"/session", adm, map[string]any{"mode": "persistent"}); rec.Code != http.StatusOK ||
 		!bytes.Contains(rec.Body.Bytes(), []byte(`"session_mode":"persistent"`)) {
 		t.Fatalf("set persistent: %d %s", rec.Code, rec.Body)
-	}
-
-	// Deleting a system needs its code as confirmation and takes its dependants with it.
-	rec = call(h, "POST", "/v1/admin/systems", adm, map[string]string{"code": "temp", "name": "Temp"})
-	var temp struct {
-		ID string `json:"id"`
-	}
-	decode(t, rec, &temp)
-	for _, tc := range []struct {
-		path string
-		want int
-	}{
-		{"/v1/admin/systems/not-a-uuid?confirm=temp", http.StatusBadRequest},
-		{"/v1/admin/systems/" + temp.ID, http.StatusBadRequest},
-		{"/v1/admin/systems/" + temp.ID + "?confirm=other", http.StatusBadRequest},
-		{"/v1/admin/systems/" + temp.ID + "?confirm=temp", http.StatusNoContent},
-		{"/v1/admin/systems/" + temp.ID + "?confirm=temp", http.StatusNotFound},
-	} {
-		if rec := call(h, "DELETE", tc.path, adm, nil); rec.Code != tc.want {
-			t.Fatalf("DELETE %s: got %d, want %d", tc.path, rec.Code, tc.want)
-		}
 	}
 
 	rec = call(h, "POST", "/v1/admin/tenants", adm, map[string]string{"ruc": "20123456789", "legal_name": "Gym SAC", "trade_name": "Gym Fit"})
@@ -599,8 +589,8 @@ func TestTenantOwnerAPI(t *testing.T) {
 	e := newE2EFull(t)
 	h := e.handler
 
-	olympus, _ := e.systems.Create(ctx, system.CreateInput{Code: "olympus", Name: "Olympus"})
-	pulso, _ := e.systems.Create(ctx, system.CreateInput{Code: "pulso", Name: "Pulso"})
+	olympus := e.seedSystem(t, "olympus", "Olympus")
+	pulso := e.seedSystem(t, "pulso", "Pulso")
 	gymA, _ := e.tenants.Create(ctx, tenant.CreateInput{RUC: "20111111111", LegalName: "Gym A"})
 	gymB, _ := e.tenants.Create(ctx, tenant.CreateInput{RUC: "20222222222", LegalName: "Gym B"})
 	for _, ts := range [][2]string{{gymA.ID, olympus.ID}, {gymB.ID, olympus.ID}, {gymB.ID, pulso.ID}} {
@@ -778,7 +768,7 @@ func TestOwnerOfTwoCompanies(t *testing.T) {
 	owner, _ := e.users.Create(ctx, user.CreateInput{DNI: "11111111", FullName: "Percy Dueño", Password: "owner-password"})
 	acmeStaff, _ := e.users.Create(ctx, user.CreateInput{DNI: "22222222", FullName: "Staff Acme", Password: "staff-password"})
 	globexStaff, _ := e.users.Create(ctx, user.CreateInput{DNI: "33333333", FullName: "Staff Globex", Password: "staff-password"})
-	olympus, _ := e.systems.Create(ctx, system.CreateInput{Code: "olympus", Name: "Olympus"})
+	olympus := e.seedSystem(t, "olympus", "Olympus")
 	if _, err := e.roles.Create(ctx, role.CreateInput{SystemID: olympus.ID, Name: "admin"}); err != nil {
 		t.Fatal(err)
 	}

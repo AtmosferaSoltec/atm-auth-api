@@ -6,11 +6,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-const uniqueViolation = "23505"
 
 type PostgresRepository struct {
 	pool *pgxpool.Pool
@@ -26,23 +23,6 @@ func scan(row pgx.Row) (System, error) {
 	var s System
 	err := row.Scan(&s.ID, &s.Code, &s.Name, &s.Status, &s.SessionMode, &s.HasSecret, &s.SecretCreatedAt, &s.SecretLastUsedAt, &s.CreatedAt, &s.UpdatedAt)
 	return s, err
-}
-
-func (r *PostgresRepository) Create(ctx context.Context, s System) (System, error) {
-	if s.SessionMode == "" {
-		s.SessionMode = SessionPersistent
-	}
-	created, err := scan(r.pool.QueryRow(ctx,
-		`INSERT INTO systems (code, name, status, session_mode) VALUES ($1, $2, $3, $4) RETURNING `+columns,
-		s.Code, s.Name, s.Status, s.SessionMode))
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
-			return System{}, ErrCodeTaken
-		}
-		return System{}, fmt.Errorf("insert system: %w", err)
-	}
-	return created, nil
 }
 
 func (r *PostgresRepository) List(ctx context.Context) ([]System, error) {
@@ -74,17 +54,6 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id string) (System, er
 		return System{}, fmt.Errorf("select system by id: %w", err)
 	}
 	return s, nil
-}
-
-func (r *PostgresRepository) Delete(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM systems WHERE id = $1`, id)
-	if err != nil {
-		return fmt.Errorf("delete system: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrSystemNotFound
-	}
-	return nil
 }
 
 func (r *PostgresRepository) GetByCode(ctx context.Context, code string) (System, error) {
