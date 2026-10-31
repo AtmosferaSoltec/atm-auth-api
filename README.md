@@ -115,7 +115,7 @@ The superadmin does not create systems or roles from the console. Both are decla
 
 Nothing is ever deleted. Roles in the database that the catalog does not declare are marked `active = false` on every start (and set back to `true` if they return to the catalog): they cannot be given or changed to (`400 unknown_role`), they are hidden from `GET /roles`, and `GET /v1/admin/systems/{id}/roles` returns `active` so the console shows them as retired; accesses already pointing at them are kept until cleaned by hand. Systems or roles that exist in the database but not in the catalog (leftovers) are logged as warnings at startup (`system in the database is not in the catalog`, `role in the database is not in the catalog` with the number of `users`); clean them by hand once nobody uses them. Giving a person a role outside the system's roles is refused with `400 unknown_role`.
 
-Catalog today: `pulso` (`admin`, `receptionist`; `member` is prepared as a commented line, not active yet), `lavendimia` (`admin`, `cashier`), `nova` (`admin`, `receptionist`, `cashier`, `dentist`), `orbita` (`admin`) and `olympus` (`admin`, `user`, `delivery`; declared only, its production client does not use this service yet). Migrations `0012` and `0013` seeded the same data before the sync existed; they stay as history.
+Catalog today: `pulso` (`admin`, `receptionist`; `member` is prepared as a commented line, not active yet), `lavendimia` (`admin`, `cashier`), `nova` (`admin`, `receptionist`, `cashier`, `dentist`), `orbita` (`admin`) and `olympuscourier` (`admin`, `user`, `delivery`; declared only, its production client does not use this service yet). Migrations `0012` and `0013` seeded the same data before the sync existed; they stay as history.
 
 ## Access model
 

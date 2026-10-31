@@ -57,7 +57,7 @@ var Systems = []System{
 	{
 		// Declared only: the Olympus production client does not use this service yet and no user is migrated by this entry.
 		// Roles come from the rol table of olympuscourier-backend (S SuperAdmin is reserved and left out).
-		Code: "olympus", Name: "Olympus", RequiresRUC: true,
+		Code: "olympuscourier", Name: "Olympus Courier", RequiresRUC: true,
 		Roles: []Role{
 			{Name: "admin", Description: "Manages the company, the team and every delivery."},
 			{Name: "user", Description: "Requests and follows deliveries."},
