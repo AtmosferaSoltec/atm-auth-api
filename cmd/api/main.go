@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/catalog"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/client"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/config"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
@@ -54,6 +55,18 @@ func run(log *slog.Logger) error {
 
 	if err := platform.Migrate(ctx, pool, migrations.Files); err != nil {
 		return err
+	}
+
+	// The systems and roles declared in code reach the database; what the database has beyond them is reported, never deleted.
+	orphans, err := catalog.NewService(catalog.NewPostgresRepository(pool), catalog.Systems).Sync(ctx)
+	if err != nil {
+		return err
+	}
+	for _, code := range orphans.Systems {
+		log.Warn("system in the database is not in the catalog", "system", code)
+	}
+	for _, r := range orphans.Roles {
+		log.Warn("role in the database is not in the catalog and was marked inactive", "system", r.SystemCode, "role", r.Name, "users", r.Users)
 	}
 
 	signer, err := platform.NewTokenSigner(cfg.JWTPrivateKey, cfg.JWTIssuer, time.Now)

@@ -72,10 +72,8 @@ go run ./cmd/api
 | POST, GET | `/users` | Create and list users. Body: `{dni, full_name}`. The DNI is always the initial password and must be changed at first login; a `password` field is rejected |
 | POST | `/users/{id}/reset-password` | Back to the DNI, change required, sessions ended |
 | PUT | `/users/{id}/status` | `{"status": "active" \| "disabled"}`. Disabling ends all sessions |
-| GET, POST | `/systems/{id}/roles` | The roles a system defines: list them (each with how many people have it) and create one: `{name, description}`. Names are unique per system without regard to case |
-| PUT | `/systems/{id}/roles/{role_id}` | Change a role's description. The name never changes: systems compare roles by it |
-| DELETE | `/systems/{id}/roles/{role_id}` | Delete a role nobody has (`409 role_in_use` otherwise) |
-| POST | `/access` | Give a user access: `{user_id, system_id, tenant_id, role, manage_users}`. `role` must be one of the system's roles (`400 unknown_role` otherwise) |
+| GET | `/systems/{id}/roles` | The roles a system defines (each with how many people have it). They are fixed in code: there is no endpoint to create, change or delete them |
+| POST | `/access` | Give a user access: `{user_id, system_id, tenant_id, role, manage_users}`. `role` must be one of the roles in the system's catalog (`400 unknown_role` otherwise) |
 | GET | `/users/{id}/access` | A user's accesses (with system and tenant names) |
 | GET | `/systems/{id}/access` | Who has access to a system: user, tenant and role |
 | DELETE | `/access/{id}` | Remove one access (the `id` comes from the access lists), so a person with several companies in a system loses only that one |
@@ -113,7 +111,11 @@ Presenting a refresh token that was already used revokes its whole session.
 
 ## Systems and roles are defined in code
 
-The superadmin does not create systems from the console: the catalog lives in the migrations. To add a system, add it to a new migration like `migrations/0012_seed_systems.sql` (`INSERT ... ON CONFLICT (code) DO NOTHING`) and its starting roles to one like `0013_seed_system_roles.sql`, then deploy. Both are idempotent: a system or role that already exists keeps what the console set (session mode, secret, descriptions) and nothing is ever deleted. Secrets are never seeded; generate them per environment from the console. `systems.requires_ruc` (true by default, false for `pulso`) says whether a system can only be enabled for companies that have a RUC, as invoicing systems need. Today: `pulso` (roles `admin`, `receptionist`) and `lavendimia` (`admin`, `cashier`).
+The superadmin does not create systems or roles from the console. Both are declared in `internal/catalog/model.go` (`catalog.Systems`), and on every start the service syncs them into the database (idempotent upsert): a missing system or role is created; a system that exists keeps its name, secret and session policy; a role's description follows the code. To add a role, add one line to the system in that file and deploy. To add a system, add a block there. Secrets are never declared in code; generate them per environment from the console. `requires_ruc` (false for `pulso`) says whether a system can only be enabled for companies that have a RUC.
+
+Nothing is ever deleted. Roles in the database that the catalog does not declare are marked `active = false` on every start (and set back to `true` if they return to the catalog): they cannot be given or changed to (`400 unknown_role`), they are hidden from `GET /roles`, and `GET /v1/admin/systems/{id}/roles` returns `active` so the console shows them as retired; accesses already pointing at them are kept until cleaned by hand. Systems or roles that exist in the database but not in the catalog (leftovers) are logged as warnings at startup (`system in the database is not in the catalog`, `role in the database is not in the catalog` with the number of `users`); clean them by hand once nobody uses them. Giving a person a role outside the system's roles is refused with `400 unknown_role`.
+
+Catalog today: `pulso` (`admin`, `receptionist`; `member` is prepared as a commented line, not active yet), `lavendimia` (`admin`, `cashier`), `nova` (`admin`, `receptionist`, `cashier`, `dentist`), `orbita` (`admin`) and `olympus` (`admin`, `user`, `delivery`; declared only, its production client does not use this service yet). Migrations `0012` and `0013` seeded the same data before the sync existed; they stay as history.
 
 ## Access model
 
@@ -122,7 +124,7 @@ The superadmin does not create systems from the console: the catalog lives in th
 - `tenant_systems`: which systems a tenant has contracted.
 - `access`: which user enters which system, in which tenant, with which role. `UNIQUE (user_id, system_id, tenant_id)`: a person can work for **several companies in the same system** (for example the owner of two businesses), once each. Only the superadmin gives a person a second company: an owner cannot add someone who already belongs to another company of the system (`409`).
 - The token always names **one** company (`tenant`). Login enters the company used last, or else the first one given; the person switches with `POST /v1/refresh` and a `tenant_id`, and each session remembers its company so a refresh keeps it. Systems keep reading `tenant` from the token and need no change. `/v1/tenant/members` acts on the company of the token.
-- Each system defines its own roles (a catalog per system). An access points at one of them, so a role cannot be mistyped and one in use cannot be deleted. In the token the role is still the name, as text (`app_role`): what each role allows is up to the system. Only `role` (`superadmin` or `user`) is used for authorization here.
+- Each system defines its own roles (a catalog per system). An access points at one of them, so a role cannot be mistyped. In the token the role is still the name, as text (`app_role`): what each role allows is up to the system. Only `role` (`superadmin` or `user`) is used for authorization here.
 - Refreshing a user session re-checks the account and the access: removing access or disabling the user ends the session at the next refresh.
 
 ## Deploy

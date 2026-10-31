@@ -29,7 +29,7 @@ func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 var failures = map[error]httpx.Failure{
 	ErrInvalidID:           {Status: http.StatusBadRequest, Message: "Invalid id."},
 	ErrInvalidRole:         {Status: http.StatusBadRequest, Message: "The role is required and can have at most 64 characters."},
-	ErrUnknownRole:         {Status: http.StatusBadRequest, Message: "The system has no such role. Create it in the system first."},
+	ErrUnknownRole:         {Status: http.StatusBadRequest, Message: "That role does not exist in the system. Choose one of the roles the system defines."},
 	ErrUserNotFound:        {Status: http.StatusNotFound, Message: "User not found."},
 	ErrAccessNotFound:      {Status: http.StatusNotFound, Message: "The user has no access to that system."},
 	ErrUserAlreadyInSystem: {Status: http.StatusConflict, Message: "The user already has access to this tenant in this system."},

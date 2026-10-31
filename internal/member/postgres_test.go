@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
 )
 
@@ -83,6 +84,23 @@ func TestPostgresScopeIsolation(t *testing.T) {
 		if m, _ := repo.Get(ctx, system, gymB, cashierB); m.Role != "cajero" {
 			t.Fatalf("victim was modified: %+v", m)
 		}
+	})
+
+	t.Run("a retired role is not offered and cannot be given", func(t *testing.T) {
+		exec(`UPDATE system_roles SET active = false WHERE system_id = $1 AND name = 'supervisor'`, system)
+		if ok, err := repo.UpdateRole(ctx, system, gymA, cashierA, "supervisor"); !errors.Is(err, access.ErrUnknownRole) || ok {
+			t.Fatalf("got %v %v", ok, err)
+		}
+		options, err := repo.Roles(ctx, system)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, o := range options {
+			if o.Name == "supervisor" {
+				t.Fatal("a retired role must not be offered")
+			}
+		}
+		exec(`UPDATE system_roles SET active = true WHERE system_id = $1 AND name = 'supervisor'`, system)
 	})
 
 	t.Run("cannot change or remove an owner", func(t *testing.T) {

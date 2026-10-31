@@ -65,6 +65,17 @@ func (r *PostgresRepository) Get(ctx context.Context, systemID, tenantID, userID
 }
 
 func (r *PostgresRepository) UpdateRole(ctx context.Context, systemID, tenantID, userID, role string) (bool, error) {
+	// A role the catalog retired (inactive) cannot be given, exactly like one that does not exist
+	// (that one is refused by the foreign key).
+	var retired bool
+	if err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM system_roles WHERE system_id = $1 AND name = $2 AND NOT active)`,
+		systemID, role).Scan(&retired); err != nil {
+		return false, fmt.Errorf("check role: %w", err)
+	}
+	if retired {
+		return false, access.ErrUnknownRole
+	}
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE access SET role = $4 WHERE system_id = $1 AND tenant_id = $2 AND user_id = $3 AND manage_users = false`,
 		systemID, tenantID, userID, role)
@@ -79,7 +90,7 @@ func (r *PostgresRepository) UpdateRole(ctx context.Context, systemID, tenantID,
 }
 
 func (r *PostgresRepository) Roles(ctx context.Context, systemID string) ([]RoleOption, error) {
-	rows, err := r.pool.Query(ctx, `SELECT name, description FROM system_roles WHERE system_id = $1 ORDER BY name`, systemID)
+	rows, err := r.pool.Query(ctx, `SELECT name, description FROM system_roles WHERE system_id = $1 AND active ORDER BY name`, systemID)
 	if err != nil {
 		return nil, fmt.Errorf("select system roles: %w", err)
 	}

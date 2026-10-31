@@ -1,13 +1,8 @@
-// Package role manages the catalog of roles each system defines.
+// Package role exposes the roles each system defines. They are declared in code (package catalog), so this package
+// only lists them: the console shows them and gives them to people through the access feature.
 package role
 
-import (
-	"strings"
-	"time"
-	"unicode"
-)
-
-const maxDescriptionLength = 200
+import "time"
 
 // Role is a role a system defines. The platform does not know what it allows: that is up to the system.
 type Role struct {
@@ -15,20 +10,9 @@ type Role struct {
 	SystemID    string
 	Name        string
 	Description string
-	// Users is how many people have this role today. Filled by List.
+	// Active is false for a role the catalog retired: it keeps its accesses but cannot be given to anyone.
+	Active bool
+	// Users is how many people have this role today.
 	Users     int
 	CreatedAt time.Time
-}
-
-func normalizeDescription(description string) (string, bool) {
-	description = strings.TrimSpace(description)
-	if len([]rune(description)) > maxDescriptionLength {
-		return "", false
-	}
-	for _, r := range description {
-		if unicode.IsControl(r) {
-			return "", false
-		}
-	}
-	return description, true
 }

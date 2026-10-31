@@ -269,6 +269,26 @@ func TestAssignNeedsARoleOfTheSystem(t *testing.T) {
 	}
 }
 
+func TestAssignRefusesARetiredRole(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	repo := NewPostgresRepository(w.pool)
+
+	platform.SeedRoles(t, w.pool, w.pulso, "old")
+	if _, err := w.pool.Exec(ctx, `UPDATE system_roles SET active = false WHERE system_id = $1 AND name = 'old'`, w.pulso); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Assign(ctx, Access{UserID: w.user, SystemID: w.pulso, TenantID: w.acme, Role: "old"}); !errors.Is(err, ErrUnknownRole) {
+		t.Fatalf("an inactive role must be refused as unknown_role: %v", err)
+	}
+	if _, err := w.pool.Exec(ctx, `UPDATE system_roles SET active = true WHERE system_id = $1 AND name = 'old'`, w.pulso); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Assign(ctx, Access{UserID: w.user, SystemID: w.pulso, TenantID: w.acme, Role: "old"}); err != nil {
+		t.Fatalf("a reactivated role can be given again: %v", err)
+	}
+}
+
 func TestResolveCarriesSessionPolicyAndIdentity(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)

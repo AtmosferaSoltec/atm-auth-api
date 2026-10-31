@@ -24,6 +24,17 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 }
 
 func (r *PostgresRepository) Assign(ctx context.Context, a Access) (Access, error) {
+	// A role the catalog retired (inactive) cannot be given, exactly like one that does not exist
+	// (that one is refused by the foreign key).
+	var retired bool
+	if err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM system_roles WHERE system_id = $1 AND name = $2 AND NOT active)`,
+		a.SystemID, a.Role).Scan(&retired); err != nil {
+		return Access{}, fmt.Errorf("check role: %w", err)
+	}
+	if retired {
+		return Access{}, ErrUnknownRole
+	}
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO access (user_id, system_id, tenant_id, role, manage_users) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
 		a.UserID, a.SystemID, a.TenantID, a.Role, a.ManageUsers).Scan(&a.ID, &a.CreatedAt)
