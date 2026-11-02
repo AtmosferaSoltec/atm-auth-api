@@ -44,6 +44,9 @@ type Config struct {
 
 	// CORSOrigins are the browser origins allowed to call the API directly (CORS_ALLOWED_ORIGINS, comma separated).
 	CORSOrigins []string
+
+	// MessagingURL is the base URL of atm-messaging-api, used to email recovery codes. Empty: no email is sent.
+	MessagingURL string
 }
 
 // Argon2FromEnv reads ARGON2_MEMORY_KIB, ARGON2_TIME and ARGON2_THREADS, falling back to the OWASP minimums.
@@ -77,6 +80,7 @@ func Load() (Config, error) {
 		LoginWindow:        getenvDuration("LOGIN_WINDOW", 15*time.Minute),
 		ClientIPHeader:     os.Getenv("CLIENT_IP_HEADER"),
 		CORSOrigins:        splitList(os.Getenv("CORS_ALLOWED_ORIGINS")),
+		MessagingURL:       os.Getenv("MESSAGING_URL"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("load config: DATABASE_URL is required")

@@ -23,6 +23,7 @@ import (
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/recovery"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/role"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/server"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/session"
@@ -41,6 +42,7 @@ type e2e struct {
 	pool    *pgxpool.Pool
 	tenants *tenant.Service
 	access  *access.Service
+	mail    *fakeMailer
 }
 
 func newE2E(t *testing.T) http.Handler { return newE2EFull(t).handler }
@@ -90,17 +92,23 @@ func newE2EFull(t *testing.T) *e2e {
 	systemsSvc := system.NewService(system.NewPostgresRepository(pool))
 	tenantsSvc := tenant.NewService(tenant.NewPostgresRepository(pool))
 	rolesSvc := role.NewService(role.NewPostgresRepository(pool))
+	mail := &fakeMailer{}
+	recoverySvc := recovery.NewService(recovery.NewPostgresRepository(pool), hasher, mail, repo, recovery.DeriveKey("test-secret"),
+		recovery.Limits{MaxPerEmail: 5, MaxPerIP: 20, Window: time.Minute}, []string{"orbitatest", "other"}, log, time.Now)
+	recoverySvc.RunInline()
 	return &e2e{
+		mail: mail,
 		handler: server.New(log, server.Deps{
 			DB: okPinger{}, Verifier: signer, JWKS: jwks,
-			Session: session.NewHandler(svc, log, ""),
-			Systems: system.NewHandler(systemsSvc, log),
-			Tenants: tenant.NewHandler(tenantsSvc, log),
-			Users:   user.NewHandler(usersSvc, log),
-			Access:  access.NewHandler(accessSvc, log),
-			Secrets: credential.NewHandler(credentialSvc, log),
-			Roles:   role.NewHandler(rolesSvc, log),
-			Members: member.NewHandler(member.NewService(member.NewPostgresRepository(pool), userRepo, usersSvc, accessSvc), log, signer),
+			Session:  session.NewHandler(svc, log, ""),
+			Systems:  system.NewHandler(systemsSvc, log),
+			Tenants:  tenant.NewHandler(tenantsSvc, log),
+			Users:    user.NewHandler(usersSvc, log),
+			Access:   access.NewHandler(accessSvc, log),
+			Secrets:  credential.NewHandler(credentialSvc, log),
+			Recovery: recovery.NewHandler(recoverySvc, log, ""),
+			Roles:    role.NewHandler(rolesSvc, log),
+			Members:  member.NewHandler(member.NewService(member.NewPostgresRepository(pool), userRepo, usersSvc, accessSvc), log, signer),
 		}),
 		users:   usersSvc,
 		pool:    pool,

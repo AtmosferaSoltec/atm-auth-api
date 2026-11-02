@@ -12,6 +12,7 @@ import (
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/httpx"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/recovery"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/role"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/session"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/system"
@@ -33,6 +34,7 @@ type Deps struct {
 	Members  *member.Handler
 	Secrets  *credential.Handler
 	Roles    *role.Handler
+	Recovery *recovery.Handler
 
 	// CORSOrigins are the browser origins allowed to call the API directly.
 	CORSOrigins []string
@@ -52,6 +54,7 @@ func New(log *slog.Logger, d Deps) http.Handler {
 	d.Session.Register(mux)
 	d.Session.RegisterAuthenticated(mux, httpx.Middleware(auth.RequireRole(d.Verifier, session.RoleUser)))
 	d.Members.Register(mux)
+	d.Recovery.Register(mux)
 
 	requireAdmin := httpx.Middleware(auth.RequireRole(d.Verifier, session.RoleSuperadmin))
 	for _, h := range []interface {

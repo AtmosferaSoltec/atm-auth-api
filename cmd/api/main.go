@@ -15,8 +15,10 @@ import (
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/client"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/config"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/mailer"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/recovery"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/role"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/server"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/session"
@@ -115,6 +117,18 @@ func run(log *slog.Logger) error {
 	sessionSvc.SetRegistrar(userSvc)
 	memberSvc := member.NewService(member.NewPostgresRepository(pool), userRepo, userSvc, accessSvc)
 
+	systemCodes := make([]string, 0, len(catalog.Systems))
+	for _, s := range catalog.Systems {
+		systemCodes = append(systemCodes, s.Code)
+	}
+	if cfg.MessagingURL == "" {
+		log.Warn("MESSAGING_URL is not set: password recovery codes cannot be emailed")
+	}
+	recoverySvc := recovery.NewService(recovery.NewPostgresRepository(pool), hasher,
+		mailer.New(cfg.MessagingURL, signer, time.Now), sessionRepo, recovery.DeriveKey(cfg.JWTPrivateKey),
+		recovery.Limits{MaxPerEmail: cfg.LoginMaxPerSubject, MaxPerIP: cfg.LoginMaxPerIP, Window: cfg.LoginWindow},
+		systemCodes, log, time.Now)
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: server.New(log, server.Deps{
@@ -130,6 +144,7 @@ func run(log *slog.Logger) error {
 			Members:  member.NewHandler(memberSvc, log, signer),
 			Secrets:  credential.NewHandler(credentialSvc, log),
 			Roles:    role.NewHandler(role.NewService(role.NewPostgresRepository(pool)), log),
+			Recovery: recovery.NewHandler(recoverySvc, log, cfg.ClientIPHeader),
 
 			CORSOrigins: cfg.CORSOrigins,
 		}),
