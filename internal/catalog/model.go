@@ -34,7 +34,7 @@ var Systems = []System{
 		},
 	},
 	{
-		Code: "lavendimia", Name: "La Vendimia", RequiresRUC: true,
+		Code: "zenit", Name: "Zenit", RequiresRUC: true,
 		Roles: []Role{
 			{Name: "admin", Description: "Manages the company, the catalog, the team and every sale."},
 			{Name: "cashier", Description: "Registers sales and dispatches."},

@@ -9,7 +9,7 @@ import (
 
 func TestCatalogDeclaration(t *testing.T) {
 	want := map[string][]string{
-		"pulso": {"admin", "receptionist"}, "lavendimia": {"admin", "cashier"},
+		"pulso": {"admin", "receptionist"}, "zenit": {"admin", "cashier"},
 		"nova": {"admin", "receptionist", "cashier", "dentist"}, "orbita": {"admin"}, "olympuscourier": {"admin", "user", "delivery"},
 	}
 	if len(Systems) != len(want) {
