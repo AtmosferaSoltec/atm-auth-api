@@ -10,5 +10,7 @@ var (
 	ErrUserAlreadyInSystem = errors.New("user_already_in_system")
 	ErrUserNotFound        = errors.New("user_not_found")
 	ErrSystemNotEnabled    = errors.New("system_not_enabled_for_tenant")
+	ErrTenantRequired      = errors.New("tenant_required")
+	ErrSignupClosed        = errors.New("signup_closed")
 	ErrAccessNotFound      = errors.New("access_not_found")
 )

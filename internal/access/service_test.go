@@ -21,6 +21,11 @@ func (f *fakeRepo) ListBySystem(context.Context, string) ([]Detail, error) { ret
 func (f *fakeRepo) Remove(context.Context, string, string) error           { return nil }
 func (f *fakeRepo) RemoveByID(context.Context, string) error               { return nil }
 
+func (f *fakeRepo) SelfSignupRole(context.Context, string) (string, error) {
+	return "", ErrSignupClosed
+}
+func (f *fakeRepo) GrantPersonal(context.Context, string, string, string) error { return nil }
+
 func (f *fakeRepo) Options(context.Context, string, string) ([]Option, error) { return nil, nil }
 
 func (f *fakeRepo) MarkUsed(context.Context, string, string, string) error { return nil }

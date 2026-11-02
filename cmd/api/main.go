@@ -111,6 +111,8 @@ func run(log *slog.Logger) error {
 	}, time.Now)
 
 	userSvc := user.NewService(userRepo, hasher, sessionSvc)
+	// The user service needs the session service to end sessions, and sign-up needs the user service.
+	sessionSvc.SetRegistrar(userSvc)
 	memberSvc := member.NewService(member.NewPostgresRepository(pool), userRepo, userSvc, accessSvc)
 
 	srv := &http.Server{

@@ -65,6 +65,37 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (User, error) {
 	return created, nil
 }
 
+// RegisterInput is a person who creates their own account with an email and a password.
+type RegisterInput struct {
+	Email    string
+	FullName string
+	Password string
+}
+
+// Register creates an account identified by email. The person chose the password, so no change is forced.
+func (s *Service) Register(ctx context.Context, in RegisterInput) (User, error) {
+	email, ok := NormalizeEmail(in.Email)
+	if !ok {
+		return User{}, ErrInvalidEmail
+	}
+	name := normalizeName(in.FullName)
+	if name == "" || len([]rune(name)) > 120 {
+		return User{}, ErrInvalidName
+	}
+	if len(in.Password) < MinPasswordLength || len(in.Password) > 128 {
+		return User{}, ErrWeakPassword
+	}
+	hash, err := s.hasher.Hash(in.Password)
+	if err != nil {
+		return User{}, fmt.Errorf("register user: %w", err)
+	}
+	created, err := s.repo.Create(ctx, User{Email: email, FullName: name, PasswordHash: hash, Status: StatusActive})
+	if err != nil {
+		return User{}, fmt.Errorf("register user: %w", err)
+	}
+	return created, nil
+}
+
 func (s *Service) List(ctx context.Context) ([]User, error) {
 	users, err := s.repo.List(ctx)
 	if err != nil {
@@ -81,6 +112,10 @@ func (s *Service) ResetPassword(ctx context.Context, id string) error {
 	u, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("reset password: %w", err)
+	}
+	if u.DNI == "" {
+		// People without a DNI recover their password themselves; there is no initial password to go back to.
+		return ErrNoDNI
 	}
 	hash, err := s.hasher.Hash(u.DNI)
 	if err != nil {

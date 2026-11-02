@@ -31,6 +31,7 @@ var failures = map[error]httpx.Failure{
 	ErrInvalidStatus: {Status: http.StatusBadRequest, Message: "The status must be 'active' or 'disabled'."},
 	ErrInvalidID:     {Status: http.StatusBadRequest, Message: "Invalid id."},
 	ErrWeakPassword:  {Status: http.StatusBadRequest, Message: "The password must have at least 8 characters."},
+	ErrNoDNI:         {Status: http.StatusConflict, Message: "This account has no DNI to reset the password to."},
 	ErrDNITaken:      {Status: http.StatusConflict, Message: "A user with that DNI already exists."},
 	ErrUserNotFound:  {Status: http.StatusNotFound, Message: "User not found."},
 }
@@ -39,6 +40,7 @@ var failures = map[error]httpx.Failure{
 type userJSON struct {
 	ID                 string    `json:"id"`
 	DNI                string    `json:"dni"`
+	Email              string    `json:"email"`
 	FullName           string    `json:"full_name"`
 	Status             string    `json:"status"`
 	MustChangePassword bool      `json:"must_change_password"`
@@ -47,7 +49,7 @@ type userJSON struct {
 
 func toJSON(u User) userJSON {
 	return userJSON{
-		ID: u.ID, DNI: u.DNI, FullName: u.FullName, Status: u.Status,
+		ID: u.ID, DNI: u.DNI, Email: u.Email, FullName: u.FullName, Status: u.Status,
 		MustChangePassword: u.MustChangePassword, CreatedAt: u.CreatedAt,
 	}
 }

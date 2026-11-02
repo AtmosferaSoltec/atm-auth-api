@@ -6,6 +6,10 @@ type Repository interface {
 	// Assign returns ErrUserAlreadyInSystem, ErrUserNotFound, ErrSystemNotEnabled or ErrUnknownRole
 	// (the role must exist in the system's catalog).
 	Assign(ctx context.Context, a Access) (Access, error)
+	// SelfSignupRole returns ErrSignupClosed unless the system is active, personal and accepts self sign-up.
+	SelfSignupRole(ctx context.Context, systemCode string) (string, error)
+	// GrantPersonal gives the user the role in a personal system, without a tenant. It is idempotent.
+	GrantPersonal(ctx context.Context, userID, systemCode, role string) error
 	// Remove returns ErrAccessNotFound when the user has no access to the system.
 	// ListByUser returns every access of a user.
 	ListByUser(ctx context.Context, userID string) ([]Detail, error)

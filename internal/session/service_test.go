@@ -122,6 +122,15 @@ func (f *fakeUsers) GetByDNI(_ context.Context, dni string) (user.User, error) {
 	return user.User{}, user.ErrUserNotFound
 }
 
+func (f *fakeUsers) GetByEmail(_ context.Context, email string) (user.User, error) {
+	for _, u := range f.byDNI {
+		if u.Email == email {
+			return u, nil
+		}
+	}
+	return user.User{}, user.ErrUserNotFound
+}
+
 func (f *fakeUsers) SetPassword(_ context.Context, id, hash string, must bool) error {
 	for dni, u := range f.byDNI {
 		if u.ID == id {
@@ -168,6 +177,12 @@ func (f *fakeAccess) Resolve(_ context.Context, userID, systemCode, tenantID str
 	}
 	return access.Grant{}, access.ErrNoAccess
 }
+
+func (f *fakeAccess) SelfSignupRole(context.Context, string) (string, error) {
+	return "", access.ErrSignupClosed
+}
+
+func (f *fakeAccess) GrantPersonal(context.Context, string, string, string) error { return nil }
 
 func (f *fakeAccess) Options(_ context.Context, userID, systemCode string) ([]access.Option, error) {
 	return f.options[userID+"|"+systemCode], nil

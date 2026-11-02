@@ -26,7 +26,8 @@ type AssignInput struct {
 // Assign lets a user enter a system inside a tenant. A user can work for several tenants in the same
 // system, once each.
 func (s *Service) Assign(ctx context.Context, in AssignInput) (Access, error) {
-	if !platform.IsUUID(in.UserID) || !platform.IsUUID(in.SystemID) || !platform.IsUUID(in.TenantID) {
+	// An empty tenant is for personal systems; the repository refuses it for any other.
+	if !platform.IsUUID(in.UserID) || !platform.IsUUID(in.SystemID) || (in.TenantID != "" && !platform.IsUUID(in.TenantID)) {
 		return Access{}, ErrInvalidID
 	}
 	role, ok := normalizeRole(in.Role)
@@ -38,6 +39,24 @@ func (s *Service) Assign(ctx context.Context, in AssignInput) (Access, error) {
 		return Access{}, fmt.Errorf("assign access: %w", err)
 	}
 	return a, nil
+}
+
+// SelfSignupRole returns the role anyone gets when they create an account in the system, or ErrSignupClosed
+// when the system does not accept it.
+func (s *Service) SelfSignupRole(ctx context.Context, systemCode string) (string, error) {
+	role, err := s.repo.SelfSignupRole(ctx, systemCode)
+	if err != nil {
+		return "", fmt.Errorf("self signup role: %w", err)
+	}
+	return role, nil
+}
+
+// GrantPersonal lets a person enter a personal system with a role, without a company.
+func (s *Service) GrantPersonal(ctx context.Context, userID, systemCode, role string) error {
+	if err := s.repo.GrantPersonal(ctx, userID, systemCode, role); err != nil {
+		return fmt.Errorf("grant personal access: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) Remove(ctx context.Context, userID, systemID string) error {

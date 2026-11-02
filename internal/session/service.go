@@ -28,6 +28,7 @@ type TokenSigner interface {
 
 type UserFinder interface {
 	GetByDNI(ctx context.Context, dni string) (user.User, error)
+	GetByEmail(ctx context.Context, email string) (user.User, error)
 	GetByID(ctx context.Context, id string) (user.User, error)
 	SetPassword(ctx context.Context, id, passwordHash string, mustChange bool) error
 }
@@ -38,8 +39,17 @@ type AccessResolver interface {
 	Resolve(ctx context.Context, userID, systemCode, tenantID string) (access.Grant, error)
 	// Options lists the companies the user can work for in the system.
 	Options(ctx context.Context, userID, systemCode string) ([]access.Option, error)
+	// SelfSignupRole returns access.ErrSignupClosed unless the system lets anyone create an account.
+	SelfSignupRole(ctx context.Context, systemCode string) (string, error)
+	// GrantPersonal gives a person a role in a personal system (no company).
+	GrantPersonal(ctx context.Context, userID, systemCode, role string) error
 	// MarkUsed records the company the user works for, so the next login enters it.
 	MarkUsed(ctx context.Context, userID, systemID, tenantID string) error
+}
+
+// UserRegistrar creates the account of a person who signs up with an email.
+type UserRegistrar interface {
+	Register(ctx context.Context, in user.RegisterInput) (user.User, error)
 }
 
 // ClientVerifier checks the secret a system's backend presents.
@@ -64,6 +74,7 @@ type Deps struct {
 	Tokens   RefreshStore
 	Attempts AttemptStore
 	Users    UserFinder
+	Signup   UserRegistrar
 	Access   AccessResolver
 	Hasher   PasswordHasher
 	Signer   TokenSigner
@@ -120,30 +131,50 @@ func (s *Service) AdminLogin(ctx context.Context, dni, password, ip string) (Tok
 	return tokens, nil
 }
 
-// UserLogin authenticates a user for one system and resolves the tenant and role they have there.
+// UserLogin authenticates a user by DNI for one system and resolves the tenant and role they have there.
 // tenantID is optional: without it the user enters the company they used last (or else the first one they
 // were given) and can switch afterwards with Refresh.
 // Failed password checks are throttled; a correct password without access is not.
 func (s *Service) UserLogin(ctx context.Context, dni, password, systemCode, tenantID, ip string) (Tokens, error) {
-	subjectKey, ipKey := "dni:"+dni, "ip:"+ip
+	return s.userLogin(ctx, "dni:"+dni, func() (user.User, error) { return s.deps.Users.GetByDNI(ctx, dni) },
+		password, systemCode, tenantID, ip)
+}
+
+// UserLoginByEmail is UserLogin for people who sign in with their email (an invalid form simply never matches).
+func (s *Service) UserLoginByEmail(ctx context.Context, email, password, systemCode, tenantID, ip string) (Tokens, error) {
+	normalized, ok := user.NormalizeEmail(email)
+	if !ok {
+		normalized = "invalid:" + email
+	}
+	return s.userLogin(ctx, "email:"+normalized, func() (user.User, error) {
+		if !ok {
+			return user.User{}, user.ErrUserNotFound
+		}
+		return s.deps.Users.GetByEmail(ctx, normalized)
+	}, password, systemCode, tenantID, ip)
+}
+
+func (s *Service) userLogin(ctx context.Context, subjectKey string, find func() (user.User, error), password, systemCode, tenantID, ip string) (Tokens, error) {
+	ipKey := "ip:" + ip
 	if err := s.checkLimits(ctx, subjectKey, ipKey); err != nil {
 		return Tokens{}, err
 	}
 
-	u, err := s.deps.Users.GetByDNI(ctx, dni)
+	u, err := find()
 	found := err == nil
 	if err != nil && !errors.Is(err, user.ErrUserNotFound) {
 		return Tokens{}, fmt.Errorf("user login: %w", err)
 	}
 	hash := s.dummyHash
-	if found {
+	// An account without a password (created with Google) cannot sign in with one.
+	if found && u.PasswordHash != "" {
 		hash = u.PasswordHash
 	}
 	ok, err := s.deps.Hasher.Verify(password, hash)
 	if err != nil {
 		return Tokens{}, fmt.Errorf("user login: %w", err)
 	}
-	if !found || !ok || u.Status != user.StatusActive {
+	if !found || u.PasswordHash == "" || !ok || u.Status != user.StatusActive {
 		if err := s.recordFailure(ctx, subjectKey, ipKey); err != nil {
 			return Tokens{}, err
 		}
@@ -156,7 +187,11 @@ func (s *Service) UserLogin(ctx context.Context, dni, password, systemCode, tena
 	if u.MustChangePassword {
 		return Tokens{}, ErrPasswordChangeRequired
 	}
+	return s.enter(ctx, u, systemCode, tenantID)
+}
 
+// enter resolves where the user may go in the system and issues their tokens.
+func (s *Service) enter(ctx context.Context, u user.User, systemCode, tenantID string) (Tokens, error) {
 	grant, err := s.deps.Access.Resolve(ctx, u.ID, systemCode, tenantID)
 	if err != nil {
 		return Tokens{}, err
@@ -169,6 +204,41 @@ func (s *Service) UserLogin(ctx context.Context, dni, password, systemCode, tena
 		return Tokens{}, fmt.Errorf("user login: %w", err)
 	}
 	return tokens, nil
+}
+
+// SetRegistrar connects sign-up. It is separate from Deps because the user service itself depends on this one.
+func (s *Service) SetRegistrar(r UserRegistrar) { s.deps.Signup = r }
+
+// SignupInput is a person creating their own account in a system that accepts it.
+type SignupInput struct {
+	System   string
+	Email    string
+	FullName string
+	Password string
+}
+
+// Signup creates the account and the person's access, and signs them in. Only systems that declare a
+// self-signup role accept it (access.ErrSignupClosed otherwise). Every attempt counts against the IP.
+func (s *Service) Signup(ctx context.Context, in SignupInput, ip string) (Tokens, error) {
+	ipKey := "signup:" + ip
+	if err := s.checkLimits(ctx, ipKey, ipKey); err != nil {
+		return Tokens{}, err
+	}
+	role, err := s.deps.Access.SelfSignupRole(ctx, in.System)
+	if err != nil {
+		return Tokens{}, err
+	}
+	if err := s.recordFailure(ctx, ipKey); err != nil {
+		return Tokens{}, err
+	}
+	u, err := s.deps.Signup.Register(ctx, user.RegisterInput{Email: in.Email, FullName: in.FullName, Password: in.Password})
+	if err != nil {
+		return Tokens{}, err
+	}
+	if err := s.deps.Access.GrantPersonal(ctx, u.ID, in.System, role); err != nil {
+		return Tokens{}, fmt.Errorf("signup: %w", err)
+	}
+	return s.enter(ctx, u, in.System, "")
 }
 
 // ChangePassword sets a new password after verifying the current one, then ends all of the user's sessions.
@@ -413,6 +483,7 @@ func (s *Service) issue(ctx context.Context, tmpl RefreshToken, grant *access.Gr
 		claims.ManageUsers = grant.ManageUsers
 		claims.Name = grant.UserName
 		claims.DNI = grant.UserDNI
+		claims.Email = grant.UserEmail
 		claims.TenantRUC = grant.TenantRUC
 		claims.Client = grant.ClientID
 		claims.ClientName = grant.ClientName

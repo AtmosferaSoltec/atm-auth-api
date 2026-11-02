@@ -37,6 +37,7 @@ type Claims struct {
 	// record of them. They are informational: authorization never reads them.
 	Name      string `json:"name,omitempty"`
 	DNI       string `json:"dni,omitempty"`
+	Email     string `json:"email,omitempty"`
 	TenantRUC string `json:"tenant_ruc,omitempty"`
 	// Client is the id of the customer that owns the tenant, and ClientName its name. A system uses them to group
 	// the companies of one owner (for Pulso: the organization that owns several gyms). Informational, like the rest.

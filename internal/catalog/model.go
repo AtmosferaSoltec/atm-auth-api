@@ -14,7 +14,11 @@ type System struct {
 	Name string
 	// RequiresRUC says whether the system can only be enabled for companies that have a RUC.
 	RequiresRUC bool
-	Roles       []Role
+	// Personal systems have no companies: each person is a user of the system on their own (no tenant).
+	Personal bool
+	// SelfSignupRole, when set, lets anyone create an account in the system; they get this role.
+	SelfSignupRole string
+	Roles          []Role
 }
 
 // Systems is the one place where systems and roles are declared. To add a role or a system, add a line here and deploy:
@@ -49,7 +53,7 @@ var Systems = []System{
 	},
 	{
 		// Personal finance. No sibling repo defines roles, so only admin is declared.
-		Code: "orbita", Name: "Orbita", RequiresRUC: false,
+		Code: "orbita", Name: "Orbita", RequiresRUC: false, Personal: true, SelfSignupRole: "admin",
 		Roles: []Role{
 			{Name: "admin", Description: "Full access to the account."},
 		},

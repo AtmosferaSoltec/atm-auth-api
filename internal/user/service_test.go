@@ -11,11 +11,17 @@ type fakeRepo struct{ byDNI map[string]User }
 func newFakeRepo() *fakeRepo { return &fakeRepo{byDNI: map[string]User{}} }
 
 func (f *fakeRepo) Create(_ context.Context, u User) (User, error) {
-	if _, ok := f.byDNI[u.DNI]; ok {
+	key := u.DNI
+	if key == "" {
+		key = "email:" + u.Email
+		if _, ok := f.byDNI[key]; ok {
+			return User{}, ErrEmailTaken
+		}
+	} else if _, ok := f.byDNI[key]; ok {
 		return User{}, ErrDNITaken
 	}
-	u.ID = "id-" + u.DNI
-	f.byDNI[u.DNI] = u
+	u.ID = "id-" + key
+	f.byDNI[key] = u
 	return u, nil
 }
 
@@ -47,6 +53,15 @@ func (f *fakeRepo) SetStatus(_ context.Context, id, status string) error {
 		}
 	}
 	return ErrUserNotFound
+}
+
+func (f *fakeRepo) GetByEmail(_ context.Context, email string) (User, error) {
+	for _, u := range f.byDNI {
+		if u.Email == email {
+			return u, nil
+		}
+	}
+	return User{}, ErrUserNotFound
 }
 
 func (f *fakeRepo) GetByDNI(_ context.Context, dni string) (User, error) {

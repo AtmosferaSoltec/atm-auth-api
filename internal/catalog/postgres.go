@@ -26,9 +26,12 @@ func (r *PostgresRepository) Upsert(ctx context.Context, systems []System) error
 	for _, s := range systems {
 		var id string
 		err := tx.QueryRow(ctx,
-			`INSERT INTO systems (code, name, requires_ruc) VALUES ($1, $2, $3)
-			 ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code RETURNING id`,
-			s.Code, s.Name, s.RequiresRUC).Scan(&id)
+			`INSERT INTO systems (code, name, requires_ruc, personal, self_signup, self_signup_role)
+			 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''))
+			 ON CONFLICT (code) DO UPDATE SET personal = EXCLUDED.personal,
+			   self_signup = EXCLUDED.self_signup, self_signup_role = EXCLUDED.self_signup_role
+			 RETURNING id`,
+			s.Code, s.Name, s.RequiresRUC, s.Personal, s.SelfSignupRole != "", s.SelfSignupRole).Scan(&id)
 		if err != nil {
 			return fmt.Errorf("upsert system %s: %w", s.Code, err)
 		}

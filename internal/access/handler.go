@@ -28,6 +28,7 @@ func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 
 var failures = map[error]httpx.Failure{
 	ErrInvalidID:           {Status: http.StatusBadRequest, Message: "Invalid id."},
+	ErrTenantRequired:      {Status: http.StatusBadRequest, Message: "This system works with companies: a tenant is required."},
 	ErrInvalidRole:         {Status: http.StatusBadRequest, Message: "The role is required and can have at most 64 characters."},
 	ErrUnknownRole:         {Status: http.StatusBadRequest, Message: "That role does not exist in the system. Choose one of the roles the system defines."},
 	ErrUserNotFound:        {Status: http.StatusNotFound, Message: "User not found."},
@@ -43,8 +44,9 @@ type accessJSON struct {
 	SystemCode  string    `json:"system_code,omitempty"`
 	SystemName  string    `json:"system_name,omitempty"`
 	UserDNI     string    `json:"user_dni,omitempty"`
+	UserEmail   string    `json:"user_email,omitempty"`
 	UserName    string    `json:"user_name,omitempty"`
-	TenantID    string    `json:"tenant_id"`
+	TenantID    string    `json:"tenant_id,omitempty"`
 	TenantName  string    `json:"tenant_name,omitempty"`
 	Role        string    `json:"role"`
 	ManageUsers bool      `json:"manage_users"`
@@ -115,7 +117,7 @@ func detailsJSON(details []Detail) []accessJSON {
 	for _, d := range details {
 		out = append(out, accessJSON{
 			ID: d.ID, UserID: d.UserID, SystemID: d.SystemID, SystemCode: d.SystemCode, SystemName: d.SystemName,
-			UserDNI: d.UserDNI, UserName: d.UserName,
+			UserDNI: d.UserDNI, UserEmail: d.UserEmail, UserName: d.UserName,
 			TenantID: d.TenantID, TenantName: d.TenantName, Role: d.Role, ManageUsers: d.ManageUsers, CreatedAt: d.CreatedAt,
 		})
 	}

@@ -28,8 +28,9 @@ type Detail struct {
 	SystemName string
 	TenantName string
 	// UserDNI and UserName are filled when listing by system.
-	UserDNI  string
-	UserName string
+	UserDNI   string
+	UserEmail string
+	UserName  string
 }
 
 // Grant is a resolved, currently valid access: user active elsewhere, system, tenant and tenant-system all active.
@@ -45,6 +46,7 @@ type Grant struct {
 	// and the company without asking anything else.
 	TenantRUC string
 	UserDNI   string
+	UserEmail string
 	UserName  string
 	// ClientID and ClientName are the customer that owns the tenant.
 	ClientID   string

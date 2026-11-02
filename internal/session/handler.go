@@ -24,6 +24,7 @@ func NewHandler(svc *Service, log *slog.Logger, clientIPHeader string) *Handler 
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/login", h.login)
+	mux.HandleFunc("POST /v1/register", h.register)
 	mux.HandleFunc("POST /v1/admin/login", h.adminLogin)
 	mux.HandleFunc("POST /v1/token", h.clientToken)
 	mux.HandleFunc("POST /v1/password/change", h.changePassword)
@@ -42,7 +43,9 @@ type loginRequest struct {
 }
 
 type userLoginRequest struct {
+	// DNI or Email identifies the person; exactly one is sent.
 	DNI      string `json:"dni"`
+	Email    string `json:"email"`
 	Password string `json:"password"`
 	System   string `json:"system"`
 	// TenantID is optional: without it the user enters the company they used last.
@@ -74,13 +77,62 @@ type tokensResponse struct {
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var req userLoginRequest
-	if err := httpx.DecodeJSON(w, r, &req); err != nil || req.DNI == "" || req.Password == "" ||
-		req.System == "" || len(req.DNI) > 64 || len(req.System) > 64 {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil || (req.DNI == "") == (req.Email == "") || req.Password == "" ||
+		req.System == "" || len(req.DNI) > 64 || len(req.Email) > 254 || len(req.System) > 64 || len(req.Password) > 256 {
 		invalidRequest(w)
 		return
 	}
-	tokens, err := h.svc.UserLogin(r.Context(), req.DNI, req.Password, req.System, req.TenantID, httpx.ClientIP(r, h.clientIPHeader))
+	ip := httpx.ClientIP(r, h.clientIPHeader)
+	var tokens Tokens
+	var err error
+	if req.Email != "" {
+		tokens, err = h.svc.UserLoginByEmail(r.Context(), req.Email, req.Password, req.System, req.TenantID, ip)
+	} else {
+		tokens, err = h.svc.UserLogin(r.Context(), req.DNI, req.Password, req.System, req.TenantID, ip)
+	}
 	h.respondTokens(w, r, tokens, err)
+}
+
+type registerRequest struct {
+	System   string `json:"system"`
+	Email    string `json:"email"`
+	FullName string `json:"full_name"`
+	Password string `json:"password"`
+}
+
+// register creates a personal account in a system that accepts self sign-up and signs the person in.
+func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
+	var req registerRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil || req.System == "" || len(req.System) > 64 || len(req.Email) > 254 ||
+		len(req.FullName) > 512 || len(req.Password) > 256 {
+		invalidRequest(w)
+		return
+	}
+	tokens, err := h.svc.Signup(r.Context(), SignupInput{System: req.System, Email: req.Email, FullName: req.FullName, Password: req.Password},
+		httpx.ClientIP(r, h.clientIPHeader))
+	if err == nil {
+		w.Header().Set("Cache-Control", "no-store")
+		httpx.JSON(w, http.StatusCreated, tokensResponse{
+			AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken,
+			TokenType: "Bearer", ExpiresIn: tokens.ExpiresIn,
+			RefreshExpiresIn: tokens.RefreshExpiresIn, SessionMode: tokens.SessionMode,
+		})
+		return
+	}
+	switch {
+	case errors.Is(err, access.ErrSignupClosed):
+		httpx.Error(w, http.StatusForbidden, "signup_closed", "This system does not accept new accounts.")
+	case errors.Is(err, user.ErrInvalidEmail):
+		httpx.Error(w, http.StatusBadRequest, "invalid_email", "The email is not valid.")
+	case errors.Is(err, user.ErrInvalidName):
+		httpx.Error(w, http.StatusBadRequest, "invalid_full_name", "The name is required (up to 120 characters).")
+	case errors.Is(err, user.ErrWeakPassword):
+		httpx.Error(w, http.StatusBadRequest, "weak_password", "The password must have between 8 and 128 characters.")
+	case errors.Is(err, user.ErrEmailTaken):
+		httpx.Error(w, http.StatusConflict, "email_taken", "An account with that email already exists.")
+	default:
+		h.respondTokens(w, r, Tokens{}, err)
+	}
 }
 
 func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +198,7 @@ func (h *Handler) respondTokens(w http.ResponseWriter, r *http.Request, tokens T
 			RefreshExpiresIn: tokens.RefreshExpiresIn, SessionMode: tokens.SessionMode,
 		})
 	case errors.Is(err, ErrInvalidCredentials):
-		httpx.Error(w, http.StatusUnauthorized, "invalid_credentials", "Invalid DNI or password.")
+		httpx.Error(w, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials.")
 	case errors.Is(err, ErrPasswordChangeRequired):
 		httpx.Error(w, http.StatusForbidden, "password_change_required", "You must set a new password before continuing.")
 	case errors.Is(err, access.ErrNoAccess):

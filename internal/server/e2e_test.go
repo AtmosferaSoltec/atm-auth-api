@@ -86,6 +86,7 @@ func newE2EFull(t *testing.T) *e2e {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	userRepo := user.NewPostgresRepository(pool)
 	usersSvc := user.NewService(userRepo, hasher, svc)
+	svc.SetRegistrar(usersSvc)
 	systemsSvc := system.NewService(system.NewPostgresRepository(pool))
 	tenantsSvc := tenant.NewService(tenant.NewPostgresRepository(pool))
 	rolesSvc := role.NewService(role.NewPostgresRepository(pool))

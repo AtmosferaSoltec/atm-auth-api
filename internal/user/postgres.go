@@ -20,21 +20,25 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const columns = "id, dni, full_name, password_hash, status, must_change_password, created_at, updated_at"
+const columns = "id, COALESCE(dni, ''), COALESCE(email, ''), email_verified_at IS NOT NULL, full_name, COALESCE(password_hash, ''), status, must_change_password, created_at, updated_at"
 
 func scan(row pgx.Row) (User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.DNI, &u.FullName, &u.PasswordHash, &u.Status, &u.MustChangePassword, &u.CreatedAt, &u.UpdatedAt)
+	err := row.Scan(&u.ID, &u.DNI, &u.Email, &u.EmailVerified, &u.FullName, &u.PasswordHash, &u.Status, &u.MustChangePassword, &u.CreatedAt, &u.UpdatedAt)
 	return u, err
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, u User) (User, error) {
 	created, err := scan(r.pool.QueryRow(ctx,
-		`INSERT INTO users (dni, full_name, password_hash, status, must_change_password) VALUES ($1, $2, $3, $4, $5) RETURNING `+columns,
-		u.DNI, u.FullName, u.PasswordHash, u.Status, u.MustChangePassword))
+		`INSERT INTO users (dni, email, full_name, password_hash, status, must_change_password)
+		 VALUES (NULLIF($1, ''), NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6) RETURNING `+columns,
+		u.DNI, u.Email, u.FullName, u.PasswordHash, u.Status, u.MustChangePassword))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+			if pgErr.ConstraintName == "users_email_key" {
+				return User{}, ErrEmailTaken
+			}
 			return User{}, ErrDNITaken
 		}
 		return User{}, fmt.Errorf("insert user: %w", err)
@@ -53,6 +57,17 @@ func (r *PostgresRepository) GetByDNI(ctx context.Context, dni string) (User, er
 	return u, nil
 }
 
+func (r *PostgresRepository) GetByEmail(ctx context.Context, email string) (User, error) {
+	u, err := scan(r.pool.QueryRow(ctx, `SELECT `+columns+` FROM users WHERE email = $1`, email))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrUserNotFound
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("select user by email: %w", err)
+	}
+	return u, nil
+}
+
 func (r *PostgresRepository) GetByID(ctx context.Context, id string) (User, error) {
 	u, err := scan(r.pool.QueryRow(ctx, `SELECT `+columns+` FROM users WHERE id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -65,7 +80,7 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id string) (User, erro
 }
 
 func (r *PostgresRepository) List(ctx context.Context) ([]User, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+columns+` FROM users ORDER BY dni LIMIT 500`)
+	rows, err := r.pool.Query(ctx, `SELECT `+columns+` FROM users ORDER BY full_name, id LIMIT 500`)
 	if err != nil {
 		return nil, fmt.Errorf("select users: %w", err)
 	}
