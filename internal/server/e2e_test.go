@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/account"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/google"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
@@ -45,6 +46,7 @@ type e2e struct {
 	access  *access.Service
 	mail    *fakeMailer
 	google  *fakeGoogleVerifier
+	hook    *fakeHook
 }
 
 func newE2E(t *testing.T) http.Handler { return newE2EFull(t).handler }
@@ -104,8 +106,16 @@ func newE2EFull(t *testing.T) *e2e {
 		Hasher: hasher, Signer: svc, Access: accessSvc, Attempts: repo, DummyHash: hash,
 		Limits: google.Limits{MaxPerEmail: 5, MaxPerIP: 20, Window: time.Minute},
 	}, time.Now)
+	hook := &fakeHook{}
+	hookServer := httptest.NewServer(hook)
+	t.Cleanup(hookServer.Close)
+	accountSvc := account.NewService(account.Deps{
+		Users: userRepo, Hasher: hasher, Accesses: accessSvc, Repo: account.NewPostgresRepository(pool), Attempts: repo,
+		Verifier: fakeGoogle, Signer: signer, DummyHash: hash, Hooks: map[string]string{"orbitatest": hookServer.URL},
+		Limits: account.Limits{MaxPerUser: 5, MaxPerIP: 20, Window: time.Minute},
+	}, time.Now)
 	return &e2e{
-		mail: mail, google: fakeGoogle,
+		mail: mail, google: fakeGoogle, hook: hook,
 		handler: server.New(log, server.Deps{
 			DB: okPinger{}, Verifier: signer, JWKS: jwks,
 			Session:  session.NewHandler(svc, log, ""),
@@ -116,6 +126,7 @@ func newE2EFull(t *testing.T) *e2e {
 			Secrets:  credential.NewHandler(credentialSvc, log),
 			Recovery: recovery.NewHandler(recoverySvc, log, ""),
 			Google:   google.NewHandler(googleSvc, log, ""),
+			Account:  account.NewHandler(accountSvc, log, ""),
 			Roles:    role.NewHandler(rolesSvc, log),
 			Members:  member.NewHandler(member.NewService(member.NewPostgresRepository(pool), userRepo, usersSvc, accessSvc), log, signer),
 		}),

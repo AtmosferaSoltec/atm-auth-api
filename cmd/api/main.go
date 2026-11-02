@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/account"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/catalog"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/client"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/config"
@@ -142,6 +143,12 @@ func run(log *slog.Logger) error {
 		Limits: google.Limits{MaxPerEmail: cfg.LoginMaxPerSubject, MaxPerIP: cfg.LoginMaxPerIP, Window: cfg.LoginWindow},
 	}, time.Now)
 
+	accountSvc := account.NewService(account.Deps{
+		Users: userRepo, Hasher: hasher, Accesses: accessSvc, Repo: account.NewPostgresRepository(pool), Attempts: sessionRepo,
+		Verifier: googleVerifier, Signer: signer, DummyHash: dummyHash, Hooks: cfg.AccountDeletionHooks,
+		Limits: account.Limits{MaxPerUser: cfg.LoginMaxPerSubject, MaxPerIP: cfg.LoginMaxPerIP, Window: cfg.LoginWindow},
+	}, time.Now)
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: server.New(log, server.Deps{
@@ -159,6 +166,7 @@ func run(log *slog.Logger) error {
 			Roles:    role.NewHandler(role.NewService(role.NewPostgresRepository(pool)), log),
 			Recovery: recovery.NewHandler(recoverySvc, log, cfg.ClientIPHeader),
 			Google:   google.NewHandler(googleSvc, log, cfg.ClientIPHeader),
+			Account:  account.NewHandler(accountSvc, log, cfg.ClientIPHeader),
 
 			CORSOrigins: cfg.CORSOrigins,
 		}),

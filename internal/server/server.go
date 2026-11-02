@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/account"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/auth"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/client"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
@@ -37,6 +38,7 @@ type Deps struct {
 	Roles    *role.Handler
 	Recovery *recovery.Handler
 	Google   *google.Handler
+	Account  *account.Handler
 
 	// CORSOrigins are the browser origins allowed to call the API directly.
 	CORSOrigins []string
@@ -54,7 +56,9 @@ func New(log *slog.Logger, d Deps) http.Handler {
 	mux.HandleFunc("GET /ready", ready(d.DB))
 	mux.HandleFunc("GET /.well-known/jwks.json", jwks(d.JWKS))
 	d.Session.Register(mux)
-	d.Session.RegisterAuthenticated(mux, httpx.Middleware(auth.RequireRole(d.Verifier, session.RoleUser)))
+	requireUser := httpx.Middleware(auth.RequireRole(d.Verifier, session.RoleUser))
+	d.Session.RegisterAuthenticated(mux, requireUser)
+	d.Account.RegisterAuthenticated(mux, requireUser)
 	d.Members.Register(mux)
 	d.Recovery.Register(mux)
 	d.Google.Register(mux)

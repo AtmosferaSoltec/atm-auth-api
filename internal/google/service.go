@@ -93,7 +93,7 @@ func (s *Service) NewChallenge(ctx context.Context) (string, error) {
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(raw)
 	now := s.now()
-	if err := s.deps.Store.CreateChallenge(ctx, hashNonce(nonce), now.Add(ChallengeTTL), now); err != nil {
+	if err := s.deps.Store.CreateChallenge(ctx, HashNonce(nonce), now.Add(ChallengeTTL), now); err != nil {
 		return "", err
 	}
 	return nonce, nil
@@ -157,7 +157,7 @@ func (s *Service) SignIn(ctx context.Context, in SignInInput, ip string) (sessio
 		}
 	}
 
-	consumed, err := s.deps.Store.ConsumeChallenge(ctx, hashNonce(in.Nonce), s.now())
+	consumed, err := s.deps.Store.ConsumeChallenge(ctx, HashNonce(in.Nonce), s.now())
 	if err != nil {
 		return session.Tokens{}, err
 	}
@@ -238,7 +238,8 @@ func (s *Service) confirmPassword(ctx context.Context, u user.User, password, ip
 	return s.deps.Attempts.Clear(ctx, emailKey)
 }
 
-func hashNonce(nonce string) []byte {
+// HashNonce is how a nonce is stored: only its hash.
+func HashNonce(nonce string) []byte {
 	sum := sha256.Sum256([]byte(nonce))
 	return sum[:]
 }

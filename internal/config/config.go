@@ -51,6 +51,10 @@ type Config struct {
 	// GoogleClientIDs are the OAuth client IDs (web, Android, iOS) whose Google ID tokens are accepted.
 	// Empty: Google sign-in is off.
 	GoogleClientIDs []string
+
+	// AccountDeletionHooks maps a personal system code to the URL that deletes its data of a person when they
+	// delete their account (ACCOUNT_DELETION_HOOKS="orbita=https://...,other=https://...").
+	AccountDeletionHooks map[string]string
 }
 
 // Argon2FromEnv reads ARGON2_MEMORY_KIB, ARGON2_TIME and ARGON2_THREADS, falling back to the OWASP minimums.
@@ -103,6 +107,11 @@ func Load() (Config, error) {
 	if cfg.Env != "development" && cfg.Env != "production" {
 		return Config{}, fmt.Errorf("load config: invalid APP_ENV %q", cfg.Env)
 	}
+	hooks, err := parseHooks(os.Getenv("ACCOUNT_DELETION_HOOKS"))
+	if err != nil {
+		return Config{}, fmt.Errorf("load config: %w", err)
+	}
+	cfg.AccountDeletionHooks = hooks
 	for _, id := range cfg.GoogleClientIDs {
 		if !strings.HasSuffix(id, ".apps.googleusercontent.com") {
 			return Config{}, fmt.Errorf("load config: GOOGLE_CLIENT_IDS entry %q must end in .apps.googleusercontent.com", id)
@@ -141,4 +150,21 @@ func splitList(v string) []string {
 		}
 	}
 	return out
+}
+
+// parseHooks reads "code=https://url,code2=https://url2". Plain http is only for localhost.
+func parseHooks(v string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, item := range splitList(v) {
+		code, url, ok := strings.Cut(item, "=")
+		code, url = strings.TrimSpace(code), strings.TrimSpace(url)
+		if !ok || code == "" || url == "" {
+			return nil, fmt.Errorf("ACCOUNT_DELETION_HOOKS entry %q must be code=url", item)
+		}
+		if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://localhost") && !strings.HasPrefix(url, "http://127.0.0.1") {
+			return nil, fmt.Errorf("ACCOUNT_DELETION_HOOKS url for %q must be https", code)
+		}
+		out[code] = url
+	}
+	return out, nil
 }
