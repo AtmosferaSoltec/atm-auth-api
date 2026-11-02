@@ -21,6 +21,7 @@ import (
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/google"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/recovery"
@@ -43,6 +44,7 @@ type e2e struct {
 	tenants *tenant.Service
 	access  *access.Service
 	mail    *fakeMailer
+	google  *fakeGoogleVerifier
 }
 
 func newE2E(t *testing.T) http.Handler { return newE2EFull(t).handler }
@@ -96,8 +98,14 @@ func newE2EFull(t *testing.T) *e2e {
 	recoverySvc := recovery.NewService(recovery.NewPostgresRepository(pool), hasher, mail, repo, recovery.DeriveKey("test-secret"),
 		recovery.Limits{MaxPerEmail: 5, MaxPerIP: 20, Window: time.Minute}, []string{"orbitatest", "other"}, log, time.Now)
 	recoverySvc.RunInline()
+	fakeGoogle := &fakeGoogleVerifier{}
+	googleSvc := google.NewService(google.Deps{
+		Verifier: fakeGoogle, Store: google.NewPostgresStore(pool), Users: userRepo, Registrar: usersSvc,
+		Hasher: hasher, Signer: svc, Access: accessSvc, Attempts: repo, DummyHash: hash,
+		Limits: google.Limits{MaxPerEmail: 5, MaxPerIP: 20, Window: time.Minute},
+	}, time.Now)
 	return &e2e{
-		mail: mail,
+		mail: mail, google: fakeGoogle,
 		handler: server.New(log, server.Deps{
 			DB: okPinger{}, Verifier: signer, JWKS: jwks,
 			Session:  session.NewHandler(svc, log, ""),
@@ -107,6 +115,7 @@ func newE2EFull(t *testing.T) *e2e {
 			Access:   access.NewHandler(accessSvc, log),
 			Secrets:  credential.NewHandler(credentialSvc, log),
 			Recovery: recovery.NewHandler(recoverySvc, log, ""),
+			Google:   google.NewHandler(googleSvc, log, ""),
 			Roles:    role.NewHandler(rolesSvc, log),
 			Members:  member.NewHandler(member.NewService(member.NewPostgresRepository(pool), userRepo, usersSvc, accessSvc), log, signer),
 		}),

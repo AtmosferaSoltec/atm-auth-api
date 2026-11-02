@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
 )
@@ -92,6 +93,28 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (User, error) 
 	created, err := s.repo.Create(ctx, User{Email: email, FullName: name, PasswordHash: hash, Status: StatusActive})
 	if err != nil {
 		return User{}, fmt.Errorf("register user: %w", err)
+	}
+	return created, nil
+}
+
+// RegisterExternal creates an account for a person whose email an identity provider (Google) already verified.
+// It has no password: the person can set one later with the email recovery flow.
+func (s *Service) RegisterExternal(ctx context.Context, email, fullName string) (User, error) {
+	email, ok := NormalizeEmail(email)
+	if !ok {
+		return User{}, ErrInvalidEmail
+	}
+	name := normalizeName(fullName)
+	if r := []rune(name); len(r) > 120 {
+		name = string(r[:120])
+	}
+	if name == "" {
+		// Providers may omit the name; the part of the email before the @ is better than refusing.
+		name = strings.SplitN(email, "@", 2)[0]
+	}
+	created, err := s.repo.Create(ctx, User{Email: email, EmailVerified: true, FullName: name, Status: StatusActive})
+	if err != nil {
+		return User{}, fmt.Errorf("register external user: %w", err)
 	}
 	return created, nil
 }

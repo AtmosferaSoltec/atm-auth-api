@@ -29,7 +29,7 @@ Other services never call this service on every request. They validate tokens lo
 
 ## Stack
 
-- Go 1.24. Standard library first (`net/http`, `log/slog`).
+- Go 1.26. Standard library first (`net/http`, `log/slog`).
 - PostgreSQL. SQL migrations live in `migrations/`.
 - Password hashing: argon2id only (`golang.org/x/crypto/argon2`). There is no bcrypt support: users of existing systems set a new password when they are migrated.
 - Tokens: JWT signed with RS256. The private key never leaves this service.

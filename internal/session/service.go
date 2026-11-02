@@ -209,6 +209,15 @@ func (s *Service) enter(ctx context.Context, u user.User, systemCode, tenantID s
 // SetRegistrar connects sign-up. It is separate from Deps because the user service itself depends on this one.
 func (s *Service) SetRegistrar(r UserRegistrar) { s.deps.Signup = r }
 
+// SignIn issues the tokens of a person who already proved who they are by other means (Google), enforcing the
+// same rules as a login: an active account with access to the system. tenantID may be empty.
+func (s *Service) SignIn(ctx context.Context, u user.User, systemCode, tenantID string) (Tokens, error) {
+	if u.Status != user.StatusActive {
+		return Tokens{}, ErrInvalidCredentials
+	}
+	return s.enter(ctx, u, systemCode, tenantID)
+}
+
 // SignupInput is a person creating their own account in a system that accepts it.
 type SignupInput struct {
 	System   string

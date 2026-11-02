@@ -15,6 +15,7 @@ import (
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/client"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/config"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/credential"
+	"github.com/AtmosferaSoltec/atm-auth-api/internal/google"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/mailer"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/member"
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/platform"
@@ -129,6 +130,18 @@ func run(log *slog.Logger) error {
 		recovery.Limits{MaxPerEmail: cfg.LoginMaxPerSubject, MaxPerIP: cfg.LoginMaxPerIP, Window: cfg.LoginWindow},
 		systemCodes, log, time.Now)
 
+	var googleVerifier google.Verifier
+	if len(cfg.GoogleClientIDs) > 0 {
+		googleVerifier = google.NewIDTokenVerifier(cfg.GoogleClientIDs)
+	} else {
+		log.Warn("GOOGLE_CLIENT_IDS is not set: Google sign-in is off")
+	}
+	googleSvc := google.NewService(google.Deps{
+		Verifier: googleVerifier, Store: google.NewPostgresStore(pool), Users: userRepo, Registrar: userSvc,
+		Hasher: hasher, Signer: sessionSvc, Access: accessSvc, Attempts: sessionRepo, DummyHash: dummyHash,
+		Limits: google.Limits{MaxPerEmail: cfg.LoginMaxPerSubject, MaxPerIP: cfg.LoginMaxPerIP, Window: cfg.LoginWindow},
+	}, time.Now)
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: server.New(log, server.Deps{
@@ -145,6 +158,7 @@ func run(log *slog.Logger) error {
 			Secrets:  credential.NewHandler(credentialSvc, log),
 			Roles:    role.NewHandler(role.NewService(role.NewPostgresRepository(pool)), log),
 			Recovery: recovery.NewHandler(recoverySvc, log, cfg.ClientIPHeader),
+			Google:   google.NewHandler(googleSvc, log, cfg.ClientIPHeader),
 
 			CORSOrigins: cfg.CORSOrigins,
 		}),

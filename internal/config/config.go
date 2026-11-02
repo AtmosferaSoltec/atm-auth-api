@@ -47,6 +47,10 @@ type Config struct {
 
 	// MessagingURL is the base URL of atm-messaging-api, used to email recovery codes. Empty: no email is sent.
 	MessagingURL string
+
+	// GoogleClientIDs are the OAuth client IDs (web, Android, iOS) whose Google ID tokens are accepted.
+	// Empty: Google sign-in is off.
+	GoogleClientIDs []string
 }
 
 // Argon2FromEnv reads ARGON2_MEMORY_KIB, ARGON2_TIME and ARGON2_THREADS, falling back to the OWASP minimums.
@@ -81,6 +85,7 @@ func Load() (Config, error) {
 		ClientIPHeader:     os.Getenv("CLIENT_IP_HEADER"),
 		CORSOrigins:        splitList(os.Getenv("CORS_ALLOWED_ORIGINS")),
 		MessagingURL:       os.Getenv("MESSAGING_URL"),
+		GoogleClientIDs:    splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("load config: DATABASE_URL is required")
@@ -97,6 +102,11 @@ func Load() (Config, error) {
 	}
 	if cfg.Env != "development" && cfg.Env != "production" {
 		return Config{}, fmt.Errorf("load config: invalid APP_ENV %q", cfg.Env)
+	}
+	for _, id := range cfg.GoogleClientIDs {
+		if !strings.HasSuffix(id, ".apps.googleusercontent.com") {
+			return Config{}, fmt.Errorf("load config: GOOGLE_CLIENT_IDS entry %q must end in .apps.googleusercontent.com", id)
+		}
 	}
 	return cfg, nil
 }

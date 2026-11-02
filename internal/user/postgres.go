@@ -30,9 +30,9 @@ func scan(row pgx.Row) (User, error) {
 
 func (r *PostgresRepository) Create(ctx context.Context, u User) (User, error) {
 	created, err := scan(r.pool.QueryRow(ctx,
-		`INSERT INTO users (dni, email, full_name, password_hash, status, must_change_password)
-		 VALUES (NULLIF($1, ''), NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6) RETURNING `+columns,
-		u.DNI, u.Email, u.FullName, u.PasswordHash, u.Status, u.MustChangePassword))
+		`INSERT INTO users (dni, email, full_name, password_hash, status, must_change_password, email_verified_at)
+		 VALUES (NULLIF($1, ''), NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6, CASE WHEN $7 THEN now() END) RETURNING `+columns,
+		u.DNI, u.Email, u.FullName, u.PasswordHash, u.Status, u.MustChangePassword, u.EmailVerified))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
