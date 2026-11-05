@@ -239,7 +239,7 @@ func TestUserFlowAcrossSystems(t *testing.T) {
 	e := newE2EFull(t)
 	h := e.handler
 
-	u, err := e.users.Create(ctx, user.CreateInput{DNI: "11111111", FullName: "Ana Pérez", Password: "ana-password"})
+	u, err := e.users.Create(ctx, user.CreateInput{DocumentNumber: "11111111", FullName: "Ana Pérez", Password: "ana-password"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +596,7 @@ func TestTenantOwnerAPI(t *testing.T) {
 		platform.SeedRoles(t, e.pool, sys, "dueño", "cajero", "supervisor", "hacked", "x")
 	}
 	mkUser := func(dni, name string) user.User {
-		u, err := e.users.Create(ctx, user.CreateInput{DNI: dni, FullName: name, Password: dni + "-secret"})
+		u, err := e.users.Create(ctx, user.CreateInput{DocumentNumber: dni, FullName: name, Password: dni + "-secret"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -755,9 +755,9 @@ func TestOwnerOfTwoCompanies(t *testing.T) {
 	e := newE2EFull(t)
 	h := e.handler
 
-	owner, _ := e.users.Create(ctx, user.CreateInput{DNI: "11111111", FullName: "Percy Dueño", Password: "owner-password"})
-	acmeStaff, _ := e.users.Create(ctx, user.CreateInput{DNI: "22222222", FullName: "Staff Acme", Password: "staff-password"})
-	globexStaff, _ := e.users.Create(ctx, user.CreateInput{DNI: "33333333", FullName: "Staff Globex", Password: "staff-password"})
+	owner, _ := e.users.Create(ctx, user.CreateInput{DocumentNumber: "11111111", FullName: "Percy Dueño", Password: "owner-password"})
+	acmeStaff, _ := e.users.Create(ctx, user.CreateInput{DocumentNumber: "22222222", FullName: "Staff Acme", Password: "staff-password"})
+	globexStaff, _ := e.users.Create(ctx, user.CreateInput{DocumentNumber: "33333333", FullName: "Staff Globex", Password: "staff-password"})
 	olympus := e.seedSystem(t, "olympus", "Olympus")
 	platform.SeedRoles(t, e.pool, olympus.ID, "admin", "cajero")
 	acme, _ := e.tenants.Create(ctx, tenant.CreateInput{RUC: "20123456789", LegalName: "Acme SAC", TradeName: "Acme"})

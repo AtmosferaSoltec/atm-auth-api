@@ -20,39 +20,40 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const columns = "id, COALESCE(dni, ''), COALESCE(email, ''), email_verified_at IS NOT NULL, full_name, COALESCE(password_hash, ''), status, must_change_password, created_at, updated_at"
+// The dni column holds the number of any document type; a missing type is a DNI (older rows).
+const columns = "id, CASE WHEN dni IS NOT NULL THEN COALESCE(document_type, 'dni') ELSE '' END, COALESCE(dni, ''), COALESCE(email, ''), email_verified_at IS NOT NULL, full_name, COALESCE(password_hash, ''), status, must_change_password, created_at, updated_at"
 
 func scan(row pgx.Row) (User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.DNI, &u.Email, &u.EmailVerified, &u.FullName, &u.PasswordHash, &u.Status, &u.MustChangePassword, &u.CreatedAt, &u.UpdatedAt)
+	err := row.Scan(&u.ID, &u.DocumentType, &u.DocumentNumber, &u.Email, &u.EmailVerified, &u.FullName, &u.PasswordHash, &u.Status, &u.MustChangePassword, &u.CreatedAt, &u.UpdatedAt)
 	return u, err
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, u User) (User, error) {
 	created, err := scan(r.pool.QueryRow(ctx,
-		`INSERT INTO users (dni, email, full_name, password_hash, status, must_change_password, email_verified_at)
-		 VALUES (NULLIF($1, ''), NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6, CASE WHEN $7 THEN now() END) RETURNING `+columns,
-		u.DNI, u.Email, u.FullName, u.PasswordHash, u.Status, u.MustChangePassword, u.EmailVerified))
+		`INSERT INTO users (document_type, dni, email, full_name, password_hash, status, must_change_password, email_verified_at)
+		 VALUES (NULLIF($1, ''), NULLIF($2, ''), NULLIF($3, ''), $4, NULLIF($5, ''), $6, $7, CASE WHEN $8 THEN now() END) RETURNING `+columns,
+		u.DocumentType, u.DocumentNumber, u.Email, u.FullName, u.PasswordHash, u.Status, u.MustChangePassword, u.EmailVerified))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
 			if pgErr.ConstraintName == "users_email_key" {
 				return User{}, ErrEmailTaken
 			}
-			return User{}, ErrDNITaken
+			return User{}, ErrDocumentTaken
 		}
 		return User{}, fmt.Errorf("insert user: %w", err)
 	}
 	return created, nil
 }
 
-func (r *PostgresRepository) GetByDNI(ctx context.Context, dni string) (User, error) {
-	u, err := scan(r.pool.QueryRow(ctx, `SELECT `+columns+` FROM users WHERE dni = $1`, dni))
+func (r *PostgresRepository) GetByDocument(ctx context.Context, number string) (User, error) {
+	u, err := scan(r.pool.QueryRow(ctx, `SELECT `+columns+` FROM users WHERE dni = $1`, number))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}
 	if err != nil {
-		return User{}, fmt.Errorf("select user by dni: %w", err)
+		return User{}, fmt.Errorf("select user by document: %w", err)
 	}
 	return u, nil
 }

@@ -301,7 +301,7 @@ func TestResolveCarriesSessionPolicyAndIdentity(t *testing.T) {
 		t.Fatalf("default policy: %+v err %v", g, err)
 	}
 	// The grant says who is signing in and for which company, so the system can link its own records.
-	if g.UserDNI != "11111111" || g.UserName != "Ana" || g.TenantRUC != "20123456789" {
+	if g.UserDocumentNumber != "11111111" || g.UserName != "Ana" || g.TenantRUC != "20123456789" {
 		t.Fatalf("identity missing: %+v", g)
 	}
 	// ...and which customer owns that company.
@@ -335,7 +335,7 @@ func TestListBySystem(t *testing.T) {
 		t.Fatalf("got %+v err %v", list, err)
 	}
 	// Ordered by user name; only the accesses of that system.
-	if list[0].UserName != "Ana" || list[0].UserDNI != "11111111" || list[0].Role != "admin" || list[0].TenantName != "Acme" || !list[0].ManageUsers {
+	if list[0].UserName != "Ana" || list[0].UserDocumentNumber != "11111111" || list[0].Role != "admin" || list[0].TenantName != "Acme" || !list[0].ManageUsers {
 		t.Fatalf("got %+v", list[0])
 	}
 	if list[1].UserName != "Beto" || list[1].Role != "cajero" || list[1].TenantName != "Globex" || list[1].SystemName != "Pulso" {

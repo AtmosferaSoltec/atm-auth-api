@@ -71,9 +71,9 @@ func (f *fakeRepo) OnlyInTenant(_ context.Context, id, _ string) (bool, error) {
 
 type fakeFinder struct{ users map[string]user.User }
 
-func (f fakeFinder) GetByDNI(_ context.Context, dni string) (user.User, error) {
+func (f fakeFinder) GetByDocument(_ context.Context, dni string) (user.User, error) {
 	for _, u := range f.users {
-		if u.DNI == dni {
+		if u.DocumentNumber == dni {
 			return u, nil
 		}
 	}
@@ -96,7 +96,7 @@ func (f *fakeUsers) Create(_ context.Context, in user.CreateInput) (user.User, e
 	if in.FullName == "" {
 		return user.User{}, user.ErrInvalidName
 	}
-	return user.User{ID: "new-" + in.DNI, DNI: in.DNI, FullName: in.FullName}, nil
+	return user.User{ID: "new-" + in.DocumentNumber, DocumentNumber: in.DocumentNumber, FullName: in.FullName}, nil
 }
 func (f *fakeUsers) ResetPassword(_ context.Context, id string) error {
 	f.reset = append(f.reset, id)
@@ -140,9 +140,9 @@ type fixture struct {
 func newFixture() *fixture {
 	f := &fixture{repo: newFakeRepo(), users: &fakeUsers{}}
 	f.finder = fakeFinder{users: map[string]user.User{
-		owner:   {ID: owner, DNI: "44444444", Status: user.StatusActive},
-		other:   {ID: other, DNI: "55555555", FullName: "Existing Person", Status: user.StatusActive},
-		cashier: {ID: cashier, DNI: "66666666", Status: user.StatusActive},
+		owner:   {ID: owner, DocumentNumber: "44444444", Status: user.StatusActive},
+		other:   {ID: other, DocumentNumber: "55555555", FullName: "Existing Person", Status: user.StatusActive},
+		cashier: {ID: cashier, DocumentNumber: "66666666", Status: user.StatusActive},
 	}}
 	f.access = &fakeAccess{grants: map[string]access.Grant{
 		owner:   {SystemID: sysID, SystemCode: "olympus", TenantID: tenantID, ManageUsers: true},
@@ -195,7 +195,7 @@ func TestAdd(t *testing.T) {
 	t.Run("new person: account created with the DNI as initial password, never as manager", func(t *testing.T) {
 		f := newFixture()
 		f.repo.members["new-77777777"] = Member{UserID: "new-77777777", Role: "cajero"}
-		if _, err := f.svc.Add(ctx, scope, AddInput{DNI: "77777777", FullName: "Nueva Persona", Role: " cajero "}); err != nil {
+		if _, err := f.svc.Add(ctx, scope, AddInput{DocumentNumber: "77777777", FullName: "Nueva Persona", Role: " cajero "}); err != nil {
 			t.Fatal(err)
 		}
 		if len(f.users.created) != 1 || f.users.created[0].Password != "" || f.users.created[0].FullName != "Nueva Persona" {
@@ -210,7 +210,7 @@ func TestAdd(t *testing.T) {
 	t.Run("existing person: account untouched, only access added", func(t *testing.T) {
 		f := newFixture()
 		f.repo.members[other] = Member{UserID: other, Role: "cajero"}
-		if _, err := f.svc.Add(ctx, scope, AddInput{DNI: "55555555", FullName: "Ignored Name", Role: "cajero"}); err != nil {
+		if _, err := f.svc.Add(ctx, scope, AddInput{DocumentNumber: "55555555", FullName: "Ignored Name", Role: "cajero"}); err != nil {
 			t.Fatal(err)
 		}
 		if len(f.users.created) != 0 {
@@ -224,8 +224,8 @@ func TestAdd(t *testing.T) {
 	t.Run("validation happens before any account is created", func(t *testing.T) {
 		f := newFixture()
 		for name, in := range map[string]AddInput{
-			"bad dni":    {DNI: "123", FullName: "X", Role: "cajero"},
-			"empty role": {DNI: "77777777", FullName: "X", Role: "  "},
+			"bad dni":    {DocumentNumber: "123", FullName: "X", Role: "cajero"},
+			"empty role": {DocumentNumber: "77777777", FullName: "X", Role: "  "},
 		} {
 			if _, err := f.svc.Add(ctx, scope, in); err == nil {
 				t.Fatalf("%s: expected error", name)
@@ -237,7 +237,7 @@ func TestAdd(t *testing.T) {
 	})
 
 	t.Run("new person without a name", func(t *testing.T) {
-		if _, err := newFixture().svc.Add(ctx, scope, AddInput{DNI: "77777777", Role: "cajero"}); !errors.Is(err, user.ErrInvalidName) {
+		if _, err := newFixture().svc.Add(ctx, scope, AddInput{DocumentNumber: "77777777", Role: "cajero"}); !errors.Is(err, user.ErrInvalidName) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -245,7 +245,7 @@ func TestAdd(t *testing.T) {
 	t.Run("already in another organization of this system", func(t *testing.T) {
 		f := newFixture()
 		f.access.err = access.ErrUserAlreadyInSystem
-		if _, err := f.svc.Add(ctx, scope, AddInput{DNI: "55555555", Role: "cajero"}); !errors.Is(err, access.ErrUserAlreadyInSystem) {
+		if _, err := f.svc.Add(ctx, scope, AddInput{DocumentNumber: "55555555", Role: "cajero"}); !errors.Is(err, access.ErrUserAlreadyInSystem) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -347,7 +347,7 @@ func TestReservedRole(t *testing.T) {
 	t.Run("an owner cannot give the superadmin role, however it is spelled", func(t *testing.T) {
 		for _, role := range []string{"superadmin", "SuperAdmin", " SUPERADMIN "} {
 			f := newFixture()
-			if _, err := f.svc.Add(ctx, scope, AddInput{DNI: "77777777", FullName: "Nueva", Role: role}); !errors.Is(err, access.ErrUnknownRole) {
+			if _, err := f.svc.Add(ctx, scope, AddInput{DocumentNumber: "77777777", FullName: "Nueva", Role: role}); !errors.Is(err, access.ErrUnknownRole) {
 				t.Fatalf("add %q: got %v", role, err)
 			}
 			if len(f.users.created) != 0 || len(f.access.assigned) != 0 {
@@ -406,7 +406,7 @@ func TestAddRefusesSomeoneOfAnotherCompany(t *testing.T) {
 	f := newFixture()
 	f.access.grants[other] = access.Grant{SystemID: sysID, SystemCode: "olympus", TenantID: "another-company"}
 
-	_, err := f.svc.Add(ctx, scope, AddInput{DNI: "55555555", Role: "cajero"})
+	_, err := f.svc.Add(ctx, scope, AddInput{DocumentNumber: "55555555", Role: "cajero"})
 	if !errors.Is(err, access.ErrUserAlreadyInSystem) {
 		t.Fatalf("got %v", err)
 	}

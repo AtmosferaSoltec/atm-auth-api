@@ -28,16 +28,19 @@ func NewService(repo Repository, hasher PasswordHasher, revoker SessionRevoker) 
 }
 
 type CreateInput struct {
-	DNI      string
-	FullName string
+	// DocumentType is "dni", "ce" or "passport"; empty means "dni".
+	DocumentType   string
+	DocumentNumber string
+	FullName       string
 	// Password is optional and only for internal callers (the HTTP API never sets it): when empty, the initial
-	// password is the DNI and the user must change it at first login.
+	// password is the document number and the user must change it at first login.
 	Password string
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (User, error) {
-	if !validDNI(in.DNI) {
-		return User{}, ErrInvalidDNI
+	documentType, documentNumber, ok := NormalizeDocument(in.DocumentType, in.DocumentNumber)
+	if !ok {
+		return User{}, ErrInvalidDocument
 	}
 	name := normalizeName(in.FullName)
 	if name == "" {
@@ -45,7 +48,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (User, error) {
 	}
 	password, mustChange := in.Password, false
 	if password == "" {
-		password, mustChange = in.DNI, true
+		password, mustChange = documentNumber, true
 	} else if len(password) < MinPasswordLength {
 		return User{}, ErrWeakPassword
 	}
@@ -54,7 +57,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (User, error) {
 		return User{}, fmt.Errorf("create user: %w", err)
 	}
 	created, err := s.repo.Create(ctx, User{
-		DNI:                in.DNI,
+		DocumentType:       documentType,
+		DocumentNumber:     documentNumber,
 		FullName:           name,
 		PasswordHash:       hash,
 		Status:             StatusActive,
@@ -127,7 +131,7 @@ func (s *Service) List(ctx context.Context) ([]User, error) {
 	return users, nil
 }
 
-// ResetPassword puts the DNI back as the password, forces a change at next login and ends all sessions.
+// ResetPassword puts the document number back as the password, forces a change at next login and ends all sessions.
 func (s *Service) ResetPassword(ctx context.Context, id string) error {
 	if !platform.IsUUID(id) {
 		return ErrInvalidID
@@ -136,11 +140,11 @@ func (s *Service) ResetPassword(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("reset password: %w", err)
 	}
-	if u.DNI == "" {
-		// People without a DNI recover their password themselves; there is no initial password to go back to.
-		return ErrNoDNI
+	if u.DocumentNumber == "" {
+		// People without a document recover their password themselves; there is no initial password to go back to.
+		return ErrNoDocument
 	}
-	hash, err := s.hasher.Hash(u.DNI)
+	hash, err := s.hasher.Hash(u.DocumentNumber)
 	if err != nil {
 		return fmt.Errorf("reset password: %w", err)
 	}

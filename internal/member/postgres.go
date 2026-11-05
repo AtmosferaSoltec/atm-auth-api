@@ -22,13 +22,13 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 }
 
 const selectMember = `
-	SELECT u.id, u.dni, u.full_name, a.role, a.manage_users, u.status, u.must_change_password
+	SELECT u.id, CASE WHEN u.dni IS NOT NULL THEN COALESCE(u.document_type, 'dni') ELSE '' END, COALESCE(u.dni, ''), u.full_name, a.role, a.manage_users, u.status, u.must_change_password
 	FROM access a
 	JOIN users u ON u.id = a.user_id`
 
 func scan(row pgx.Row) (Member, error) {
 	var m Member
-	err := row.Scan(&m.UserID, &m.DNI, &m.FullName, &m.Role, &m.ManageUsers, &m.Status, &m.MustChangePassword)
+	err := row.Scan(&m.UserID, &m.DocumentType, &m.DocumentNumber, &m.FullName, &m.Role, &m.ManageUsers, &m.Status, &m.MustChangePassword)
 	return m, err
 }
 

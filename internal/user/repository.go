@@ -3,10 +3,10 @@ package user
 import "context"
 
 type Repository interface {
-	// Create stores u and returns it with its generated fields. It returns ErrDNITaken or ErrEmailTaken on a duplicate.
+	// Create stores u and returns it with its generated fields. It returns ErrDocumentTaken or ErrEmailTaken on a duplicate.
 	Create(ctx context.Context, u User) (User, error)
-	// GetByDNI returns ErrUserNotFound when there is no match.
-	GetByDNI(ctx context.Context, dni string) (User, error)
+	// GetByDocument takes a normalized document number (of any type). It returns ErrUserNotFound when there is no match.
+	GetByDocument(ctx context.Context, number string) (User, error)
 	// GetByEmail takes a normalized email. It returns ErrUserNotFound when there is no match.
 	GetByEmail(ctx context.Context, email string) (User, error)
 	// GetByID returns ErrUserNotFound when there is no match.

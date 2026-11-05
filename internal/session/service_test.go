@@ -115,7 +115,7 @@ func (f *fakeSigner) Sign(c platform.Claims) (string, error) {
 
 type fakeUsers struct{ byDNI map[string]user.User }
 
-func (f *fakeUsers) GetByDNI(_ context.Context, dni string) (user.User, error) {
+func (f *fakeUsers) GetByDocument(_ context.Context, dni string) (user.User, error) {
 	if u, ok := f.byDNI[dni]; ok {
 		return u, nil
 	}
@@ -218,9 +218,9 @@ func newFixture() *fixture {
 	f := &fixture{
 		refresh: newFakeRefreshStore(), attempts: newFakeAttempts(), signer: &fakeSigner{}, now: &now,
 		users: &fakeUsers{byDNI: map[string]user.User{
-			"11111111": {ID: "u1", DNI: "11111111", PasswordHash: "user-password", Status: user.StatusActive},
-			"22222222": {ID: "u2", DNI: "22222222", PasswordHash: "user-password", Status: user.StatusDisabled},
-			"33333333": {ID: "u3", DNI: "33333333", PasswordHash: "33333333", Status: user.StatusActive, MustChangePassword: true},
+			"11111111": {ID: "u1", DocumentNumber: "11111111", PasswordHash: "user-password", Status: user.StatusActive},
+			"22222222": {ID: "u2", DocumentNumber: "22222222", PasswordHash: "user-password", Status: user.StatusDisabled},
+			"33333333": {ID: "u3", DocumentNumber: "33333333", PasswordHash: "33333333", Status: user.StatusActive, MustChangePassword: true},
 		}},
 		access: &fakeAccess{grants: map[string]access.Grant{
 			"u1|olympus": {SystemID: "s1", SystemCode: "olympus", TenantID: "t1", Role: "cajero"},
@@ -754,7 +754,7 @@ func TestUserTokenIdentifiesPersonAndCompany(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture()
 	g := f.access.grants["u1|olympus"]
-	g.UserName, g.UserDNI, g.TenantRUC = "Ana Pérez", "11111111", "20123456789"
+	g.UserName, g.UserDocumentNumber, g.TenantRUC = "Ana Pérez", "11111111", "20123456789"
 	g.ClientID, g.ClientName = "client-1", "Gimnasios Ana"
 	f.access.grants["u1|olympus"] = g
 

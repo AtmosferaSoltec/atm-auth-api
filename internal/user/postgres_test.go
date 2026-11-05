@@ -12,7 +12,7 @@ func TestPostgresRepository(t *testing.T) {
 	ctx := context.Background()
 	repo := NewPostgresRepository(platform.NewTestPool(t))
 
-	created, err := repo.Create(ctx, User{DNI: "74455518", FullName: "Joel", PasswordHash: "h", Status: StatusActive})
+	created, err := repo.Create(ctx, User{DocumentNumber: "74455518", FullName: "Joel", PasswordHash: "h", Status: StatusActive})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,15 +20,15 @@ func TestPostgresRepository(t *testing.T) {
 		t.Fatalf("generated fields missing: %+v", created)
 	}
 
-	got, err := repo.GetByDNI(ctx, "74455518")
+	got, err := repo.GetByDocument(ctx, "74455518")
 	if err != nil || got.ID != created.ID {
 		t.Fatalf("got %+v err %v", got, err)
 	}
 
-	if _, err := repo.GetByDNI(ctx, "00000000"); !errors.Is(err, ErrUserNotFound) {
+	if _, err := repo.GetByDocument(ctx, "00000000"); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("got %v", err)
 	}
-	if _, err := repo.Create(ctx, User{DNI: "74455518", FullName: "Dup", PasswordHash: "h", Status: StatusActive}); !errors.Is(err, ErrDNITaken) {
+	if _, err := repo.Create(ctx, User{DocumentNumber: "74455518", FullName: "Dup", PasswordHash: "h", Status: StatusActive}); !errors.Is(err, ErrDocumentTaken) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -36,7 +36,7 @@ func TestPostgresRepository(t *testing.T) {
 func TestPostgresPasswordStatusAndList(t *testing.T) {
 	ctx := context.Background()
 	repo := NewPostgresRepository(platform.NewTestPool(t))
-	u, err := repo.Create(ctx, User{DNI: "74455518", FullName: "Joel", PasswordHash: "h1", Status: StatusActive, MustChangePassword: true})
+	u, err := repo.Create(ctx, User{DocumentNumber: "74455518", FullName: "Joel", PasswordHash: "h1", Status: StatusActive, MustChangePassword: true})
 	if err != nil || !u.MustChangePassword {
 		t.Fatalf("got %+v err %v", u, err)
 	}

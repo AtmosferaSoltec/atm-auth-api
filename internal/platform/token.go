@@ -33,9 +33,13 @@ type Claims struct {
 	Tenant      string `json:"tenant,omitempty"`
 	AppRole     string `json:"app_role,omitempty"`
 	ManageUsers bool   `json:"manage_users,omitempty"`
-	// Name and DNI identify the person, and TenantRUC the company, so a system can link or create its own
-	// record of them. They are informational: authorization never reads them.
-	Name      string `json:"name,omitempty"`
+	// Name and the document identify the person, and TenantRUC the company, so a system can link or create its
+	// own record of them. They are informational: authorization never reads them.
+	Name string `json:"name,omitempty"`
+	// DocumentType is "dni", "ce" or "passport", and DocumentNumber its number.
+	DocumentType   string `json:"document_type,omitempty"`
+	DocumentNumber string `json:"document_number,omitempty"`
+	// DNI repeats DocumentNumber, whatever its type, for systems written before foreign documents. Deprecated.
 	DNI       string `json:"dni,omitempty"`
 	Email     string `json:"email,omitempty"`
 	TenantRUC string `json:"tenant_ruc,omitempty"`

@@ -43,7 +43,9 @@ type loginRequest struct {
 }
 
 type userLoginRequest struct {
-	// DNI or Email identifies the person; exactly one is sent.
+	// Document (the number of a DNI, CE or passport) or Email identifies the person; exactly one is sent.
+	Document string `json:"document"`
+	// DNI is how older clients send the document number. Deprecated: use document.
 	DNI      string `json:"dni"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
@@ -53,6 +55,8 @@ type userLoginRequest struct {
 }
 
 type changePasswordRequest struct {
+	Document string `json:"document"`
+	// DNI is how older clients send the document number. Deprecated: use document.
 	DNI             string `json:"dni"`
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`
@@ -75,20 +79,32 @@ type tokensResponse struct {
 	SessionMode string `json:"session_mode"`
 }
 
+// documentOf returns the document number of a request that may still name it `dni`. Both at once is invalid.
+func documentOf(document, dni string) (string, bool) {
+	if document != "" && dni != "" {
+		return "", false
+	}
+	if document == "" {
+		document = dni
+	}
+	return document, len(document) <= 64
+}
+
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var req userLoginRequest
-	if err := httpx.DecodeJSON(w, r, &req); err != nil || (req.DNI == "") == (req.Email == "") || req.Password == "" ||
-		req.System == "" || len(req.DNI) > 64 || len(req.Email) > 254 || len(req.System) > 64 || len(req.Password) > 256 {
+	err := httpx.DecodeJSON(w, r, &req)
+	document, documentOK := documentOf(req.Document, req.DNI)
+	if err != nil || !documentOK || (document == "") == (req.Email == "") || req.Password == "" ||
+		req.System == "" || len(req.Email) > 254 || len(req.System) > 64 || len(req.Password) > 256 {
 		invalidRequest(w)
 		return
 	}
 	ip := httpx.ClientIP(r, h.clientIPHeader)
 	var tokens Tokens
-	var err error
 	if req.Email != "" {
 		tokens, err = h.svc.UserLoginByEmail(r.Context(), req.Email, req.Password, req.System, req.TenantID, ip)
 	} else {
-		tokens, err = h.svc.UserLogin(r.Context(), req.DNI, req.Password, req.System, req.TenantID, ip)
+		tokens, err = h.svc.UserLogin(r.Context(), document, req.Password, req.System, req.TenantID, ip)
 	}
 	h.respondTokens(w, r, tokens, err)
 }
@@ -147,18 +163,19 @@ func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	var req changePasswordRequest
-	if err := httpx.DecodeJSON(w, r, &req); err != nil || req.DNI == "" || req.CurrentPassword == "" ||
-		req.NewPassword == "" || len(req.DNI) > 64 {
+	err := httpx.DecodeJSON(w, r, &req)
+	document, documentOK := documentOf(req.Document, req.DNI)
+	if err != nil || !documentOK || document == "" || req.CurrentPassword == "" || req.NewPassword == "" {
 		invalidRequest(w)
 		return
 	}
-	err := h.svc.ChangePassword(r.Context(), req.DNI, req.CurrentPassword, req.NewPassword, httpx.ClientIP(r, h.clientIPHeader))
+	err = h.svc.ChangePassword(r.Context(), document, req.CurrentPassword, req.NewPassword, httpx.ClientIP(r, h.clientIPHeader))
 	if err == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if errors.Is(err, user.ErrWeakPassword) {
-		httpx.Error(w, http.StatusBadRequest, "weak_password", "The new password must have at least 8 characters, differ from the current one and not be the DNI.")
+		httpx.Error(w, http.StatusBadRequest, "weak_password", "The new password must have at least 8 characters, differ from the current one and not be the document number.")
 		return
 	}
 	h.respondTokens(w, r, Tokens{}, err)

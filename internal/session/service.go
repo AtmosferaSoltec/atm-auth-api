@@ -27,7 +27,8 @@ type TokenSigner interface {
 }
 
 type UserFinder interface {
-	GetByDNI(ctx context.Context, dni string) (user.User, error)
+	// GetByDocument takes a normalized document number.
+	GetByDocument(ctx context.Context, number string) (user.User, error)
 	GetByEmail(ctx context.Context, email string) (user.User, error)
 	GetByID(ctx context.Context, id string) (user.User, error)
 	SetPassword(ctx context.Context, id, passwordHash string, mustChange bool) error
@@ -83,7 +84,7 @@ type Deps struct {
 
 type Config struct {
 	Admin AdminCredentials
-	// DummyHash is a valid password hash verified when a DNI does not exist,
+	// DummyHash is a valid password hash verified when a document does not exist,
 	// so the response time does not reveal whether the account exists.
 	DummyHash  string
 	Limits     Limits
@@ -131,12 +132,14 @@ func (s *Service) AdminLogin(ctx context.Context, dni, password, ip string) (Tok
 	return tokens, nil
 }
 
-// UserLogin authenticates a user by DNI for one system and resolves the tenant and role they have there.
+// UserLogin authenticates a user by the number of their identity document (DNI, CE or passport) for one system and resolves the tenant and role they have there.
 // tenantID is optional: without it the user enters the company they used last (or else the first one they
 // were given) and can switch afterwards with Refresh.
 // Failed password checks are throttled; a correct password without access is not.
-func (s *Service) UserLogin(ctx context.Context, dni, password, systemCode, tenantID, ip string) (Tokens, error) {
-	return s.userLogin(ctx, "dni:"+dni, func() (user.User, error) { return s.deps.Users.GetByDNI(ctx, dni) },
+func (s *Service) UserLogin(ctx context.Context, document, password, systemCode, tenantID, ip string) (Tokens, error) {
+	number := user.NormalizeDocumentNumber(document)
+	// The throttling key keeps its "dni:" prefix so the limits counted before foreign documents still apply.
+	return s.userLogin(ctx, "dni:"+number, func() (user.User, error) { return s.deps.Users.GetByDocument(ctx, number) },
 		password, systemCode, tenantID, ip)
 }
 
@@ -252,13 +255,14 @@ func (s *Service) Signup(ctx context.Context, in SignupInput, ip string) (Tokens
 
 // ChangePassword sets a new password after verifying the current one, then ends all of the user's sessions.
 // It does not issue tokens: the user must log in again.
-func (s *Service) ChangePassword(ctx context.Context, dni, current, next, ip string) error {
-	subjectKey, ipKey := "dni:"+dni, "ip:"+ip
+func (s *Service) ChangePassword(ctx context.Context, document, current, next, ip string) error {
+	number := user.NormalizeDocumentNumber(document)
+	subjectKey, ipKey := "dni:"+number, "ip:"+ip
 	if err := s.checkLimits(ctx, subjectKey, ipKey); err != nil {
 		return err
 	}
 
-	u, err := s.deps.Users.GetByDNI(ctx, dni)
+	u, err := s.deps.Users.GetByDocument(ctx, number)
 	found := err == nil
 	if err != nil && !errors.Is(err, user.ErrUserNotFound) {
 		return fmt.Errorf("change password: %w", err)
@@ -277,7 +281,7 @@ func (s *Service) ChangePassword(ctx context.Context, dni, current, next, ip str
 		}
 		return ErrInvalidCredentials
 	}
-	if !user.ValidNewPassword(next, dni) || next == current {
+	if !user.ValidNewPassword(next, number) || next == current {
 		return user.ErrWeakPassword
 	}
 
@@ -491,7 +495,10 @@ func (s *Service) issue(ctx context.Context, tmpl RefreshToken, grant *access.Gr
 		claims.AppRole = grant.Role
 		claims.ManageUsers = grant.ManageUsers
 		claims.Name = grant.UserName
-		claims.DNI = grant.UserDNI
+		claims.DocumentType = grant.UserDocumentType
+		claims.DocumentNumber = grant.UserDocumentNumber
+		// Older systems read the number from `dni`, whatever its type.
+		claims.DNI = grant.UserDocumentNumber
 		claims.Email = grant.UserEmail
 		claims.TenantRUC = grant.TenantRUC
 		claims.Client = grant.ClientID

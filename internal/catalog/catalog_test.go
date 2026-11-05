@@ -10,7 +10,7 @@ import (
 func TestCatalogDeclaration(t *testing.T) {
 	want := map[string][]string{
 		"pulso": {"admin", "receptionist"}, "zenit": {"admin", "cashier"},
-		"nova": {"admin", "receptionist", "cashier", "dentist"}, "orbita": {"admin"}, "olympuscourier": {"admin", "user", "delivery"},
+		"nova": {"admin", "receptionist", "cashier", "dentist"}, "orbita": {"admin"}, "olympuscourier": {"admin", "counter", "courier"},
 	}
 	if len(Systems) != len(want) {
 		t.Fatalf("got %d systems", len(Systems))

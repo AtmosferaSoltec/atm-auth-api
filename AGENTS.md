@@ -12,20 +12,24 @@ Instructions for every AI agent (and human) working in this repository. Read it 
 
 ATM-Auth-API is the single source of truth for identity and access across all ATM systems:
 
-- Global user accounts: one account per person, identified by national ID (DNI).
+- Global user accounts: one account per person, identified by an identity document: a Peruvian DNI (8 digits), a foreign resident card `ce` (9 to 12 digits) or a `passport` (6 to 12 letters or digits, stored in upper case). The number is unique across types and is all a person types to sign in. In the database the number lives in `users.dni` (the column kept its name) and the type in `users.document_type` (NULL on rows written before types existed, which are DNIs).
 - Systems (Olympus, Lavendimia, Pulso, Nova, Orbita) and tenants (companies, one per RUC).
 - Clients: the real customer that owns one or more tenants (`tenants.client_id`, never null). A system decides what the tenants of one client share (for example the buyers of two stores of the same owner); this service only says who belongs to whom. A new tenant without a `client_id` gets its own client named after it.
 - Access: which user can enter which system, in which tenant, with which role.
 - Login, refresh, and logout. Issues short-lived RS256 JWT access tokens.
 - Admin API (superadmin only) used by ATM-Console-Web to manage all of the above.
 - There is exactly one superadmin (the owner). It is NOT a row in `users`: its credentials come from the environment (`ADMIN_USER`, and `ADMIN_PASSWORD` of at least 12 characters, which the service hashes with argon2id when it starts; only the hash is kept in memory, and the plain value lives only in the private `.env` of each environment) and it logs in through its own endpoint, `POST /v1/admin/login`. Its token carries `role: superadmin` and no system or tenant.
-- New accounts get their DNI as the initial password and `must_change_password = true`. While it is set, login answers `403 password_change_required` and no token is issued. `POST /v1/password/change` clears it and ends all sessions.
+- New accounts get their document number as the initial password and `must_change_password = true`. While it is set, login answers `403 password_change_required` and no token is issued. `POST /v1/password/change` clears it and ends all sessions.
 - `access.manage_users` marks the owner of a tenant in a system; the owner will manage only members of their own (system, tenant), taken from their token and checked again in the database. An owner can reset the password only of users who exist solely in their tenant. Only the superadmin grants `manage_users`.
 - Rule: a user belongs to at most one tenant per system (`UNIQUE (user_id, system_id)` in `access`). Across different systems the same user can belong to different tenants.
 
 Out of scope: business permissions inside each system (what a "cashier" can do in Olympus stays in Olympus), billing, messaging, and file storage.
 
 Other services never call this service on every request. They validate tokens locally with the public key.
+
+## Local test user
+
+Agents testing any local ATM system need a login: use the shared local test user (DNI `99999999`, an admin in every system and in two fictitious companies). Credentials, ports and setup are in "Local test user" in `README.md`; `scripts/dev-seed.sh` creates it. It must never be created in production, and the script refuses non-localhost URLs.
 
 ## Stack
 
@@ -83,8 +87,8 @@ Keep it simple. Do not add layers, generic base types, or abstractions until a s
 ## Errors
 
 - Every domain error has a stable snake_case English code, defined in the feature's `errors.go` (for example `invalid_credentials`, `user_not_found`, `tenant_disabled`).
-- HTTP error body: `{"error": {"code": "invalid_credentials", "message": "Invalid DNI or password."}}`.
-- On login failures never reveal whether a DNI exists. Always answer `invalid_credentials`.
+- HTTP error body: `{"error": {"code": "invalid_credentials", "message": "Invalid document or password."}}`.
+- On login failures never reveal whether a document exists. Always answer `invalid_credentials`.
 - Wrap errors with context (`fmt.Errorf("create user: %w", err)`). Do not log and return the same error.
 
 ## Security rules
@@ -93,7 +97,7 @@ Keep it simple. Do not add layers, generic base types, or abstractions until a s
 - Never commit secrets. `.env`, `*.pem`, and `*.key` are git-ignored.
 - All SQL uses parameters. Never build SQL with string concatenation.
 - Accept only RS256. Access tokens last minutes. Refresh tokens are stored hashed, rotated on every use, and revocable.
-- Rate-limit login attempts per DNI and per IP.
+- Rate-limit login attempts per document and per IP.
 - Compare secrets in constant time.
 - Hashing parameters come from configuration. Do not hard-code them.
 

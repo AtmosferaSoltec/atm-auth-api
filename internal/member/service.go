@@ -18,7 +18,7 @@ const ReservedRole = "superadmin"
 func isReserved(role string) bool { return strings.EqualFold(strings.TrimSpace(role), ReservedRole) }
 
 type UserFinder interface {
-	GetByDNI(ctx context.Context, dni string) (user.User, error)
+	GetByDocument(ctx context.Context, number string) (user.User, error)
 	GetByID(ctx context.Context, id string) (user.User, error)
 }
 
@@ -98,16 +98,20 @@ func (s *Service) List(ctx context.Context, sc Scope) ([]Member, error) {
 }
 
 type AddInput struct {
-	DNI      string
-	FullName string
-	Role     string
+	// DocumentType is "dni", "ce" or "passport"; empty means "dni".
+	DocumentType   string
+	DocumentNumber string
+	FullName       string
+	Role           string
 }
 
-// Add gives a person access to the scope's system and tenant. If the DNI has no account yet, one is created
-// with the DNI as initial password. If it already exists, the account (name and password) is left untouched.
+// Add gives a person access to the scope's system and tenant. If the document has no account yet, one is created
+// with the document number as initial password. If it already exists, the account (name and password) is left
+// untouched: the number identifies the person, whatever type was chosen.
 func (s *Service) Add(ctx context.Context, sc Scope, in AddInput) (Member, error) {
-	if !user.ValidDNI(in.DNI) {
-		return Member{}, user.ErrInvalidDNI
+	documentType, documentNumber, ok := user.NormalizeDocument(in.DocumentType, in.DocumentNumber)
+	if !ok {
+		return Member{}, user.ErrInvalidDocument
 	}
 	role, ok := access.NormalizeRole(in.Role)
 	if !ok {
@@ -117,11 +121,11 @@ func (s *Service) Add(ctx context.Context, sc Scope, in AddInput) (Member, error
 		return Member{}, access.ErrUnknownRole
 	}
 
-	u, err := s.finder.GetByDNI(ctx, in.DNI)
+	u, err := s.finder.GetByDocument(ctx, documentNumber)
 	if errors.Is(err, user.ErrUserNotFound) {
-		u, err = s.users.Create(ctx, user.CreateInput{DNI: in.DNI, FullName: in.FullName})
-		if errors.Is(err, user.ErrDNITaken) { // created concurrently
-			u, err = s.finder.GetByDNI(ctx, in.DNI)
+		u, err = s.users.Create(ctx, user.CreateInput{DocumentType: documentType, DocumentNumber: documentNumber, FullName: in.FullName})
+		if errors.Is(err, user.ErrDocumentTaken) { // created concurrently
+			u, err = s.finder.GetByDocument(ctx, documentNumber)
 		}
 	}
 	if err != nil {

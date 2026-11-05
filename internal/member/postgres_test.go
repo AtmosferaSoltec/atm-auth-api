@@ -66,7 +66,7 @@ func TestPostgresScopeIsolation(t *testing.T) {
 
 	t.Run("get", func(t *testing.T) {
 		m, err := repo.Get(ctx, system, gymA, cashierA)
-		if err != nil || m.Role != "cajero" || m.DNI != "22222222" || m.ManageUsers {
+		if err != nil || m.Role != "cajero" || m.DocumentNumber != "22222222" || m.ManageUsers {
 			t.Fatalf("got %+v err %v", m, err)
 		}
 		if _, err := repo.Get(ctx, system, gymA, cashierB); !errors.Is(err, ErrMemberNotFound) {

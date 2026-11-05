@@ -26,19 +26,22 @@ func (h *Handler) Register(mux *http.ServeMux, admin httpx.Middleware) {
 }
 
 var failures = map[error]httpx.Failure{
-	ErrInvalidDNI:    {Status: http.StatusBadRequest, Message: "The DNI must have 8 digits."},
-	ErrInvalidName:   {Status: http.StatusBadRequest, Message: "The full name is required."},
-	ErrInvalidStatus: {Status: http.StatusBadRequest, Message: "The status must be 'active' or 'disabled'."},
-	ErrInvalidID:     {Status: http.StatusBadRequest, Message: "Invalid id."},
-	ErrWeakPassword:  {Status: http.StatusBadRequest, Message: "The password must have at least 8 characters."},
-	ErrNoDNI:         {Status: http.StatusConflict, Message: "This account has no DNI to reset the password to."},
-	ErrDNITaken:      {Status: http.StatusConflict, Message: "A user with that DNI already exists."},
-	ErrUserNotFound:  {Status: http.StatusNotFound, Message: "User not found."},
+	ErrInvalidDocument: {Status: http.StatusBadRequest, Message: DocumentRules},
+	ErrInvalidName:     {Status: http.StatusBadRequest, Message: "The full name is required."},
+	ErrInvalidStatus:   {Status: http.StatusBadRequest, Message: "The status must be 'active' or 'disabled'."},
+	ErrInvalidID:       {Status: http.StatusBadRequest, Message: "Invalid id."},
+	ErrWeakPassword:    {Status: http.StatusBadRequest, Message: "The password must have at least 8 characters."},
+	ErrNoDocument:      {Status: http.StatusConflict, Message: "This account has no document to reset the password to."},
+	ErrDocumentTaken:   {Status: http.StatusConflict, Message: "A user with that document number already exists."},
+	ErrUserNotFound:    {Status: http.StatusNotFound, Message: "User not found."},
 }
 
 // userJSON never includes the password hash.
 type userJSON struct {
-	ID                 string    `json:"id"`
+	ID             string `json:"id"`
+	DocumentType   string `json:"document_type"`
+	DocumentNumber string `json:"document_number"`
+	// DNI repeats DocumentNumber for clients written before foreign documents. Deprecated.
 	DNI                string    `json:"dni"`
 	Email              string    `json:"email"`
 	FullName           string    `json:"full_name"`
@@ -49,21 +52,28 @@ type userJSON struct {
 
 func toJSON(u User) userJSON {
 	return userJSON{
-		ID: u.ID, DNI: u.DNI, Email: u.Email, FullName: u.FullName, Status: u.Status,
+		ID: u.ID, DocumentType: u.DocumentType, DocumentNumber: u.DocumentNumber, DNI: u.DocumentNumber, Email: u.Email, FullName: u.FullName, Status: u.Status,
 		MustChangePassword: u.MustChangePassword, CreatedAt: u.CreatedAt,
 	}
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		DocumentType   string `json:"document_type"`
+		DocumentNumber string `json:"document_number"`
+		// DNI is how older clients send a DNI. Deprecated: use document_type and document_number.
 		DNI      string `json:"dni"`
 		FullName string `json:"full_name"`
 	}
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil || (req.DNI != "" && (req.DocumentNumber != "" || req.DocumentType != "")) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
 		return
 	}
-	u, err := h.svc.Create(r.Context(), CreateInput{DNI: req.DNI, FullName: req.FullName})
+	documentType, documentNumber := req.DocumentType, req.DocumentNumber
+	if req.DNI != "" {
+		documentType, documentNumber = DocumentDNI, req.DNI
+	}
+	u, err := h.svc.Create(r.Context(), CreateInput{DocumentType: documentType, DocumentNumber: documentNumber, FullName: req.FullName})
 	if err != nil {
 		httpx.Fail(w, r, h.log, err, failures)
 		return

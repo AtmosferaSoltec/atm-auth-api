@@ -38,11 +38,14 @@ var failures = map[error]httpx.Failure{
 }
 
 type accessJSON struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	SystemID    string    `json:"system_id"`
-	SystemCode  string    `json:"system_code,omitempty"`
-	SystemName  string    `json:"system_name,omitempty"`
+	ID                 string `json:"id"`
+	UserID             string `json:"user_id"`
+	SystemID           string `json:"system_id"`
+	SystemCode         string `json:"system_code,omitempty"`
+	SystemName         string `json:"system_name,omitempty"`
+	UserDocumentType   string `json:"user_document_type,omitempty"`
+	UserDocumentNumber string `json:"user_document_number,omitempty"`
+	// UserDNI repeats UserDocumentNumber for clients written before foreign documents. Deprecated.
 	UserDNI     string    `json:"user_dni,omitempty"`
 	UserEmail   string    `json:"user_email,omitempty"`
 	UserName    string    `json:"user_name,omitempty"`
@@ -117,7 +120,7 @@ func detailsJSON(details []Detail) []accessJSON {
 	for _, d := range details {
 		out = append(out, accessJSON{
 			ID: d.ID, UserID: d.UserID, SystemID: d.SystemID, SystemCode: d.SystemCode, SystemName: d.SystemName,
-			UserDNI: d.UserDNI, UserEmail: d.UserEmail, UserName: d.UserName,
+			UserDocumentType: d.UserDocumentType, UserDocumentNumber: d.UserDocumentNumber, UserDNI: d.UserDocumentNumber, UserEmail: d.UserEmail, UserName: d.UserName,
 			TenantID: d.TenantID, TenantName: d.TenantName, Role: d.Role, ManageUsers: d.ManageUsers, CreatedAt: d.CreatedAt,
 		})
 	}

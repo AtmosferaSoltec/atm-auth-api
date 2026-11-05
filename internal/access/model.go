@@ -27,10 +27,11 @@ type Detail struct {
 	SystemCode string
 	SystemName string
 	TenantName string
-	// UserDNI and UserName are filled when listing by system.
-	UserDNI   string
-	UserEmail string
-	UserName  string
+	// UserDocumentType, UserDocumentNumber and UserName are filled when listing by system.
+	UserDocumentType   string
+	UserDocumentNumber string
+	UserEmail          string
+	UserName           string
 }
 
 // Grant is a resolved, currently valid access: user active elsewhere, system, tenant and tenant-system all active.
@@ -42,12 +43,13 @@ type Grant struct {
 	ManageUsers bool
 	// SessionMode is the system's session policy: "persistent" or "temporary".
 	SessionMode string
-	// TenantRUC, UserDNI and UserName let the consuming system link or create its own record of the person
+	// TenantRUC, the user's document and UserName let the consuming system link or create its own record of the person
 	// and the company without asking anything else.
-	TenantRUC string
-	UserDNI   string
-	UserEmail string
-	UserName  string
+	TenantRUC          string
+	UserDocumentType   string
+	UserDocumentNumber string
+	UserEmail          string
+	UserName           string
 	// ClientID and ClientName are the customer that owns the tenant.
 	ClientID   string
 	ClientName string

@@ -12,7 +12,8 @@ type Scope struct {
 // Member is a user with access to the scope's system inside the scope's tenant.
 type Member struct {
 	UserID             string
-	DNI                string
+	DocumentType       string
+	DocumentNumber     string
 	FullName           string
 	Role               string
 	ManageUsers        bool

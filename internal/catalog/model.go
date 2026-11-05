@@ -59,13 +59,13 @@ var Systems = []System{
 		},
 	},
 	{
-		// Declared only: the Olympus production client does not use this service yet and no user is migrated by this entry.
-		// Roles come from the rol table of olympuscourier-backend (S SuperAdmin is reserved and left out).
+		// Olympus Courier (olympus-api). Single company; the roles mirror the business: the admin owns everything, the
+		// counter clerk registers clients and deliveries at the counter, the courier carries out deliveries.
 		Code: "olympuscourier", Name: "Olympus Courier", RequiresRUC: true,
 		Roles: []Role{
-			{Name: "admin", Description: "Manages the company, the team and every delivery."},
-			{Name: "user", Description: "Requests and follows deliveries."},
-			{Name: "delivery", Description: "Carries out deliveries."},
+			{Name: "admin", Description: "Manages the company, the team, the settings and every delivery."},
+			{Name: "counter", Description: "Registers clients, deliveries and invoices at the counter. Cannot edit or delete."},
+			{Name: "courier", Description: "Carries out the deliveries assigned to them."},
 		},
 	},
 }

@@ -43,6 +43,32 @@ go run ./cmd/genkey     # -> JWT_PRIVATE_KEY
 go run ./cmd/api
 ```
 
+## Local test user (for agents and developers)
+
+Every local system (Zenit, Nova, Pulso, Orbita, Olympus Courier) can be tested by signing in through a local copy of this API with one shared test user. **It exists only in local databases, never in production**: do not create it there.
+
+| | |
+|---|---|
+| Local API | `http://localhost:3130` (the production container uses the same loopback port). The default `HTTP_ADDR=:8080` is often taken by other dev servers on the owner's Mac, so start it with `HTTP_ADDR=:3130` |
+| DNI | `99999999` |
+| Password | `Local-Test-2026` |
+| Role | `admin` in every system, with `manage_users` |
+| Companies | `Bodega de Pruebas S.A.C.` (RUC `20999999991`, the one login enters by default) and `Empresa de Pruebas S.A.C.` (RUC `20999999992`), both fictitious, with every company system enabled. Orbita is personal: access without a company |
+
+Log in like any user: `POST /v1/login` with `{"dni": "99999999", "password": "Local-Test-2026", "system": "zenit"}`. Switch company with `POST /v1/refresh` and a `tenant_id`.
+
+Bring it up from scratch:
+
+```
+docker compose up -d                                   # PostgreSQL on localhost:5433
+HTTP_ADDR=:3130 CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3002 go run ./cmd/api
+scripts/dev-seed.sh                                    # creates the user, the two companies and the accesses
+```
+
+`scripts/dev-seed.sh` is idempotent, reads the superadmin from `.env` and refuses any URL that is not `localhost`. A system's backend that asks this API for its companies (as Zenit does) also needs that system's secret: log in as superadmin, `POST /v1/admin/systems/{id}/secret`, and put `client_secret` in that backend's `AUTH_CLIENT_SECRET`. Point each backend's `AUTH_API_URL` and each web's `NEXT_PUBLIC_AUTH_URL` at `http://localhost:3130`.
+
+A system that keeps its own company record links it by RUC the first time someone from that company signs in. To test with existing local data, give that record RUC `20999999991` (and the tenant id in its `auth_tenant_id`, if the system stores one).
+
 ## Routes
 
 | Method | Path | Description |
@@ -50,7 +76,7 @@ go run ./cmd/api
 | GET | `/health` | Liveness |
 | GET | `/ready` | Readiness (checks the database) |
 | GET | `/.well-known/jwks.json` | Public key (JWKS) other services use to validate access tokens |
-| POST | `/v1/login` | User login. Body: `{"dni" or "email", "password", "system"}` (exactly one of `dni` / `email`), plus an optional `tenant_id` to enter a specific company. Without it the person enters the company they used last, or else the first one they were given. The token carries `system`, `tenant` and `app_role`, plus `name`, `dni`, `tenant_ruc`, `client` (the id of the customer that owns the company) and `client_name`, so the system can link or create its own record of the person, the company and its owner. Pulso, for example, reads `client` as the organization and each `tenant` as one of its gyms. The response also says `session_mode` and `refresh_expires_in` (seconds), so the client knows whether to remember the session. `403 no_access` if the user cannot enter that system |
+| POST | `/v1/login` | User login. Body: `{"document" or "email", "password", "system"}` (exactly one of `document` / `email`; `document` is the number of a DNI, CE or passport, and spaces, dashes and lower case are ignored; the older name `dni` is still accepted), plus an optional `tenant_id` to enter a specific company. Without it the person enters the company they used last, or else the first one they were given. The token carries `system`, `tenant` and `app_role`, plus `name`, `document_type` (`dni`, `ce` or `passport`), `document_number`, `dni` (deprecated: the same number, whatever its type), `tenant_ruc`, `client` (the id of the customer that owns the company) and `client_name`, so the system can link or create its own record of the person, the company and its owner. Pulso, for example, reads `client` as the organization and each `tenant` as one of its gyms. The response also says `session_mode` and `refresh_expires_in` (seconds), so the client knows whether to remember the session. `403 no_access` if the user cannot enter that system |
 | POST | `/v1/register` | Self sign-up for **personal systems** (catalog `Personal` with a `SelfSignupRole`, today Orbita). Body: `{"system", "email", "full_name", "password"}` (password 8-128 characters). Creates the account and an access without a company, and answers `201` with the same tokens as login. `403 signup_closed` if the system does not accept it, `409 email_taken`, `400 invalid_email` / `invalid_full_name` / `weak_password`. Throttled per IP like logins |
 | POST | `/v1/password/forgot` | Body: `{"email", "system"}`. Always `204` for a well-formed request: if the email has an account, a 6-digit code (15 minutes, 3 per day) is sent through atm-messaging-api on behalf of `system`. `400 unknown_system` / `invalid_email`, `429` throttled per IP and per email |
 | POST | `/v1/password/verify` | Body: `{"email", "code"}`. `204` if the code works (it is not consumed); `422 reset_code_invalid` otherwise. A wrong guess counts: the code stops at the fifth |
@@ -60,7 +86,7 @@ go run ./cmd/api
 | DELETE | `/v1/account` | Needs a user token. Body: `{"password"}` or, for accounts without one, `{"credential", "nonce"}` of the linked Google identity. Only for people whose accesses are all in personal systems (`409 account_shared` otherwise). Calls each system's `ACCOUNT_DELETION_HOOKS` URL first (POST `{user_id, system}` with a service token of subject `system:auth`); if one fails, nothing is deleted (`502 account_cleanup_failed`) |
 | POST | `/v1/token` | Service token for a system's backend. Body: `{"client_id": <system code>, "client_secret"}`. Returns a short-lived `access_token` (role `service`, subject `system:<code>`) with no refresh token; the backend asks again when it expires. One secret per system works on every microservice, which only verify the token with the JWKS. Throttled like logins |
 | POST | `/v1/admin/login` | Superadmin login. Body: `{"dni", "password"}` |
-| POST | `/v1/password/change` | Body: `{"dni", "current_password", "new_password"}`. Ends all sessions; the user logs in again |
+| POST | `/v1/password/change` | Body: `{"document", "current_password", "new_password"}` (`dni` still accepted). Ends all sessions; the user logs in again |
 | POST | `/v1/refresh` | Rotate a refresh token. Body: `{"refresh_token"}`, plus an optional `tenant_id` to **switch the session to another company** the person works for in the system (no password needed; `403 no_access` if they do not, and their session stays). That company becomes the one login enters next time |
 | GET | `/v1/session/tenants` | The companies the signed-in person can work for in the system of their token: `{items: [{tenant_id, ruc, name, role, current}]}`. Clients show a selector when there is more than one |
 | POST | `/v1/logout` | Revoke the session. Body: `{"refresh_token"}` |
@@ -79,8 +105,8 @@ go run ./cmd/api
 | PUT | `/tenants/{id}` | Edit the company profile. Body (all fields are sent; an empty one is cleared, only `legal_name` is required): `{legal_name, trade_name, address, department, province, district, ubigeo, phone, email, logo_file_id}`. `ubigeo` is 6 digits, `logo_file_id` the id of the logo in atm-storage-api (never a URL). `ruc` may also be sent: a company that already has one keeps it (sending the same value is fine, a different one is `409 ruc_immutable`, an empty one changes nothing); a company **without** one may set it once. Systems read this data instead of keeping their own copy |
 | POST | `/tenants/{id}/systems` | Enable a system for a tenant. Body: `{"system_id"}`. `409 ruc_required` if the system has `requires_ruc` and the tenant has no RUC (Pulso does not) |
 | DELETE | `/tenants/{id}/systems/{system_id}` | Disable a system for a tenant. Removes the access its users had in that system (accounts stay) |
-| POST, GET | `/users` | Create and list users. Body: `{dni, full_name}`. The DNI is always the initial password and must be changed at first login; a `password` field is rejected |
-| POST | `/users/{id}/reset-password` | Back to the DNI, change required, sessions ended |
+| POST, GET | `/users` | Create and list users. Body: `{document_type, document_number, full_name}`, or the older `{dni, full_name}` for a DNI. The document number is always the initial password and must be changed at first login; a `password` field is rejected |
+| POST | `/users/{id}/reset-password` | Back to the document number, change required, sessions ended |
 | PUT | `/users/{id}/status` | `{"status": "active" \| "disabled"}`. Disabling ends all sessions |
 | GET | `/systems/{id}/roles` | The roles a system defines (each with how many people have it). They are fixed in code: there is no endpoint to create, change or delete them |
 | POST | `/access` | Give a user access: `{user_id, system_id, tenant_id, role, manage_users}`. `role` must be one of the roles in the system's catalog (`400 unknown_role` otherwise) |
@@ -107,7 +133,7 @@ The scope (system and tenant) comes from the owner's current access in the datab
 |---|---|---|
 | GET | `/roles` | The roles of the owner's system, to choose from when adding or changing a member |
 | GET | `/members` | People of the owner's tenant in the owner's system |
-| POST | `/members` | `{dni, full_name, role}`. Creates the account (DNI as initial password) or, if the DNI already exists, only adds the access |
+| POST | `/members` | `{document_type, document_number, full_name, role}` (or the older `{dni, ...}`). Creates the account (document number as initial password) or, if the number already exists, only adds the access |
 | PUT | `/members/{user_id}` | `{role}`. Change a member's role |
 | DELETE | `/members/{user_id}` | Remove the member from the tenant (the account is kept) |
 | POST | `/members/{user_id}/reset-password` | Only for people who exist solely in this tenant |
@@ -116,8 +142,12 @@ Owners (`manage_users`) cannot be changed, removed or reset through this API, no
 The role `superadmin` is reserved for the platform's own team: it is hidden from `GET /roles`, owners cannot give it (`400 unknown_role`), and people who have it cannot be changed or removed through this API. Only the superadmin API grants it.
 `manage_users` is granted only by the superadmin.
 
-Login is throttled per DNI and per IP (`LOGIN_*` variables) and answers `429 too_many_attempts` with `Retry-After`.
+Login is throttled per document and per IP (`LOGIN_*` variables) and answers `429 too_many_attempts` with `Retry-After`.
 Presenting a refresh token that was already used revokes its whole session.
+
+## Identity documents
+
+A person is identified by one document: `dni` (8 digits), `ce`, the foreign resident card (9 to 12 digits), or `passport`, which also covers any other foreign ID (6 to 12 letters or digits). Numbers are stored without spaces or dashes and in upper case, and are unique across types. Users, members and access listings answer `document_type` and `document_number` (and `dni`, deprecated, with the same number). Errors: `400 invalid_document`, `409 document_taken`.
 
 ## Systems and roles are defined in code
 
@@ -129,7 +159,7 @@ Catalog today: `pulso` (`admin`, `receptionist`; `member` is prepared as a comme
 
 ## Personal systems
 
-A system declared `Personal: true` in the catalog has no companies: its people sign in with an email, their access has no tenant (`access.tenant_id` is NULL, at most one per user and system) and their token carries no `tenant`, `tenant_ruc` or `client`, but does carry `email`. A system with `SelfSignupRole` also lets anyone create their own account with `POST /v1/register`. Accounts may have a DNI, an email or both (`users.dni` is optional, `users.email` is unique), and may have no password yet (reserved for Google sign-in). Resetting a password to the DNI only works for accounts that have one (`409 no_dni` otherwise). The superadmin can still give access to a personal system without `tenant_id`; any other system requires it (`400 tenant_required`).
+A system declared `Personal: true` in the catalog has no companies: its people sign in with an email, their access has no tenant (`access.tenant_id` is NULL, at most one per user and system) and their token carries no `tenant`, `tenant_ruc` or `client`, but does carry `email`. A system with `SelfSignupRole` also lets anyone create their own account with `POST /v1/register`. Accounts may have a document, an email or both (`users.dni` is optional, `users.email` is unique), and may have no password yet (reserved for Google sign-in). Resetting a password to the document number only works for accounts that have one (`409 no_document` otherwise). The superadmin can still give access to a personal system without `tenant_id`; any other system requires it (`400 tenant_required`).
 
 ## Access model
 

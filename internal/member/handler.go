@@ -49,8 +49,8 @@ var failures = map[error]httpx.Failure{
 	ErrProtectedMember: {Status: http.StatusForbidden, Message: "Only the platform administrator can change this member."},
 	ErrResetNotAllowed: {Status: http.StatusForbidden, Message: "This person also belongs to other organizations. Ask the platform administrator to reset the password."},
 
-	user.ErrInvalidDNI:  {Status: http.StatusBadRequest, Message: "The DNI must have 8 digits."},
-	user.ErrInvalidName: {Status: http.StatusBadRequest, Message: "The full name is required for a new person."},
+	user.ErrInvalidDocument: {Status: http.StatusBadRequest, Message: user.DocumentRules},
+	user.ErrInvalidName:     {Status: http.StatusBadRequest, Message: "The full name is required for a new person."},
 
 	access.ErrInvalidRole:         {Status: http.StatusBadRequest, Message: "The role is required and can have at most 64 characters."},
 	access.ErrUnknownRole:         {Status: http.StatusBadRequest, Message: "The system has no such role. Choose one from GET /v1/tenant/roles."},
@@ -88,7 +88,10 @@ func (h *Handler) serviceScope(next func(http.ResponseWriter, *http.Request, Sco
 }
 
 type memberJSON struct {
-	UserID             string `json:"user_id"`
+	UserID         string `json:"user_id"`
+	DocumentType   string `json:"document_type"`
+	DocumentNumber string `json:"document_number"`
+	// DNI repeats DocumentNumber for clients written before foreign documents. Deprecated.
 	DNI                string `json:"dni"`
 	FullName           string `json:"full_name"`
 	Role               string `json:"role"`
@@ -99,7 +102,7 @@ type memberJSON struct {
 
 func toJSON(m Member) memberJSON {
 	return memberJSON{
-		UserID: m.UserID, DNI: m.DNI, FullName: m.FullName, Role: m.Role, ManageUsers: m.ManageUsers,
+		UserID: m.UserID, DocumentType: m.DocumentType, DocumentNumber: m.DocumentNumber, DNI: m.DocumentNumber, FullName: m.FullName, Role: m.Role, ManageUsers: m.ManageUsers,
 		Status: m.Status, MustChangePassword: m.MustChangePassword,
 	}
 }
@@ -119,15 +122,24 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, sc Scope) {
 
 func (h *Handler) add(w http.ResponseWriter, r *http.Request, sc Scope) {
 	var req struct {
+		DocumentType   string `json:"document_type"`
+		DocumentNumber string `json:"document_number"`
+		// DNI is how older clients send a DNI. Deprecated: use document_type and document_number.
 		DNI      string `json:"dni"`
 		FullName string `json:"full_name"`
 		Role     string `json:"role"`
 	}
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+	if err := httpx.DecodeJSON(w, r, &req); err != nil || (req.DNI != "" && (req.DocumentNumber != "" || req.DocumentType != "")) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_request", "Invalid request body.")
 		return
 	}
-	m, err := h.svc.Add(r.Context(), sc, AddInput{DNI: req.DNI, FullName: req.FullName, Role: req.Role})
+	documentType, documentNumber := req.DocumentType, req.DocumentNumber
+	if req.DNI != "" {
+		documentType, documentNumber = user.DocumentDNI, req.DNI
+	}
+	m, err := h.svc.Add(r.Context(), sc, AddInput{
+		DocumentType: documentType, DocumentNumber: documentNumber, FullName: req.FullName, Role: req.Role,
+	})
 	if err != nil {
 		httpx.Fail(w, r, h.log, err, failures)
 		return

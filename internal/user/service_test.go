@@ -11,14 +11,14 @@ type fakeRepo struct{ byDNI map[string]User }
 func newFakeRepo() *fakeRepo { return &fakeRepo{byDNI: map[string]User{}} }
 
 func (f *fakeRepo) Create(_ context.Context, u User) (User, error) {
-	key := u.DNI
+	key := u.DocumentNumber
 	if key == "" {
 		key = "email:" + u.Email
 		if _, ok := f.byDNI[key]; ok {
 			return User{}, ErrEmailTaken
 		}
 	} else if _, ok := f.byDNI[key]; ok {
-		return User{}, ErrDNITaken
+		return User{}, ErrDocumentTaken
 	}
 	u.ID = "id-" + key
 	f.byDNI[key] = u
@@ -64,7 +64,7 @@ func (f *fakeRepo) GetByEmail(_ context.Context, email string) (User, error) {
 	return User{}, ErrUserNotFound
 }
 
-func (f *fakeRepo) GetByDNI(_ context.Context, dni string) (User, error) {
+func (f *fakeRepo) GetByDocument(_ context.Context, dni string) (User, error) {
 	u, ok := f.byDNI[dni]
 	if !ok {
 		return User{}, ErrUserNotFound
@@ -94,7 +94,7 @@ func (fakeHasher) Hash(p string) (string, error) { return "hashed:" + p, nil }
 
 func TestCreate(t *testing.T) {
 	ctx := context.Background()
-	valid := CreateInput{DNI: "74455518", FullName: "  Joel   Maldonado ", Password: "longenough"}
+	valid := CreateInput{DocumentNumber: "74455518", FullName: "  Joel   Maldonado ", Password: "longenough"}
 
 	tests := []struct {
 		name string
@@ -102,10 +102,10 @@ func TestCreate(t *testing.T) {
 		want error
 	}{
 		{"ok", valid, nil},
-		{"short dni", CreateInput{DNI: "123", FullName: "A", Password: "longenough"}, ErrInvalidDNI},
-		{"letters in dni", CreateInput{DNI: "7445551a", FullName: "A", Password: "longenough"}, ErrInvalidDNI},
-		{"empty name", CreateInput{DNI: "74455518", FullName: "   ", Password: "longenough"}, ErrInvalidName},
-		{"weak password", CreateInput{DNI: "74455518", FullName: "A", Password: "short"}, ErrWeakPassword},
+		{"short dni", CreateInput{DocumentNumber: "123", FullName: "A", Password: "longenough"}, ErrInvalidDocument},
+		{"letters in dni", CreateInput{DocumentNumber: "7445551a", FullName: "A", Password: "longenough"}, ErrInvalidDocument},
+		{"empty name", CreateInput{DocumentNumber: "74455518", FullName: "   ", Password: "longenough"}, ErrInvalidName},
+		{"weak password", CreateInput{DocumentNumber: "74455518", FullName: "A", Password: "short"}, ErrWeakPassword},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -132,7 +132,7 @@ func TestCreate(t *testing.T) {
 		if _, err := svc.Create(ctx, valid); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := svc.Create(ctx, valid); !errors.Is(err, ErrDNITaken) {
+		if _, err := svc.Create(ctx, valid); !errors.Is(err, ErrDocumentTaken) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -140,7 +140,7 @@ func TestCreate(t *testing.T) {
 
 func TestCreateWithoutPasswordUsesDNIAndForcesChange(t *testing.T) {
 	u, err := NewService(newFakeRepo(), fakeHasher{}, &fakeRevoker{}).Create(context.Background(),
-		CreateInput{DNI: "74455518", FullName: "Joel"})
+		CreateInput{DocumentNumber: "74455518", FullName: "Joel"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestCreateWithoutPasswordUsesDNIAndForcesChange(t *testing.T) {
 
 func TestCreateWithPasswordDoesNotForceChange(t *testing.T) {
 	u, _ := NewService(newFakeRepo(), fakeHasher{}, &fakeRevoker{}).Create(context.Background(),
-		CreateInput{DNI: "74455518", FullName: "Joel", Password: "chosen-password"})
+		CreateInput{DocumentNumber: "74455518", FullName: "Joel", Password: "chosen-password"})
 	if u.MustChangePassword {
 		t.Fatal("an explicit password must not force a change")
 	}
@@ -161,13 +161,13 @@ func TestResetPassword(t *testing.T) {
 	ctx := context.Background()
 	repo, revoker := newFakeRepo(), &fakeRevoker{}
 	svc := NewService(repo, fakeHasher{}, revoker)
-	u, _ := svc.Create(ctx, CreateInput{DNI: "74455518", FullName: "Joel", Password: "chosen-password"})
+	u, _ := svc.Create(ctx, CreateInput{DocumentNumber: "74455518", FullName: "Joel", Password: "chosen-password"})
 
 	if err := svc.ResetPassword(ctx, u.ID); !errors.Is(err, ErrInvalidID) {
 		t.Fatalf("a non-uuid id must be rejected, got %v", err)
 	}
 	const id = "11111111-1111-1111-1111-111111111111"
-	repo.byDNI["74455518"] = User{ID: id, DNI: "74455518", PasswordHash: "x", Status: StatusActive}
+	repo.byDNI["74455518"] = User{ID: id, DocumentNumber: "74455518", PasswordHash: "x", Status: StatusActive}
 	if err := svc.ResetPassword(ctx, id); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestSetStatus(t *testing.T) {
 	ctx := context.Background()
 	const id = "11111111-1111-1111-1111-111111111111"
 	repo, revoker := newFakeRepo(), &fakeRevoker{}
-	repo.byDNI["74455518"] = User{ID: id, DNI: "74455518", Status: StatusActive}
+	repo.byDNI["74455518"] = User{ID: id, DocumentNumber: "74455518", Status: StatusActive}
 	svc := NewService(repo, fakeHasher{}, revoker)
 
 	if err := svc.SetStatus(ctx, id, "banned"); !errors.Is(err, ErrInvalidStatus) {

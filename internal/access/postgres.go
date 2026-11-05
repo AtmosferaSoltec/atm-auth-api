@@ -159,7 +159,8 @@ func (r *PostgresRepository) Resolve(ctx context.Context, userID, systemCode, te
 	// A personal access has no tenant: its company columns are empty and nothing about a company must be active.
 	err := r.pool.QueryRow(ctx, `
 		SELECT a.system_id, s.code, COALESCE(a.tenant_id::text, ''), a.role, a.manage_users, s.session_mode,
-		       COALESCE(t.ruc, ''), COALESCE(u.dni, ''), COALESCE(u.email, ''), u.full_name,
+		       COALESCE(t.ruc, ''), CASE WHEN u.dni IS NOT NULL THEN COALESCE(u.document_type, 'dni') ELSE '' END,
+		       COALESCE(u.dni, ''), COALESCE(u.email, ''), u.full_name,
 		       COALESCE(t.client_id::text, ''), COALESCE(c.name, '')
 		FROM access a
 		JOIN users u    ON u.id = a.user_id
@@ -173,7 +174,7 @@ func (r *PostgresRepository) Resolve(ctx context.Context, userID, systemCode, te
 		  AND (a.tenant_id IS NULL OR (t.status = 'active' AND ts.status = 'active'))
 		ORDER BY a.last_used_at DESC NULLS LAST, a.created_at, a.id
 		LIMIT 1`,
-		userID, systemCode, tenantID).Scan(&g.SystemID, &g.SystemCode, &g.TenantID, &g.Role, &g.ManageUsers, &g.SessionMode, &g.TenantRUC, &g.UserDNI, &g.UserEmail, &g.UserName, &g.ClientID, &g.ClientName)
+		userID, systemCode, tenantID).Scan(&g.SystemID, &g.SystemCode, &g.TenantID, &g.Role, &g.ManageUsers, &g.SessionMode, &g.TenantRUC, &g.UserDocumentType, &g.UserDocumentNumber, &g.UserEmail, &g.UserName, &g.ClientID, &g.ClientName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Grant{}, ErrNoAccess
 	}
@@ -214,7 +215,8 @@ func (r *PostgresRepository) ListByUser(ctx context.Context, userID string) ([]D
 func (r *PostgresRepository) ListBySystem(ctx context.Context, systemID string) ([]Detail, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT a.id, a.user_id, a.system_id, COALESCE(a.tenant_id::text, ''), a.role, a.manage_users, a.created_at,
-		       s.code, s.name, COALESCE(NULLIF(t.trade_name, ''), t.legal_name, ''), COALESCE(u.dni, ''), COALESCE(u.email, ''), u.full_name
+		       s.code, s.name, COALESCE(NULLIF(t.trade_name, ''), t.legal_name, ''),
+		       CASE WHEN u.dni IS NOT NULL THEN COALESCE(u.document_type, 'dni') ELSE '' END, COALESCE(u.dni, ''), COALESCE(u.email, ''), u.full_name
 		FROM access a
 		JOIN systems s ON s.id = a.system_id
 		LEFT JOIN tenants t ON t.id = a.tenant_id
@@ -229,7 +231,7 @@ func (r *PostgresRepository) ListBySystem(ctx context.Context, systemID string) 
 	for rows.Next() {
 		var d Detail
 		if err := rows.Scan(&d.ID, &d.UserID, &d.SystemID, &d.TenantID, &d.Role, &d.ManageUsers, &d.CreatedAt,
-			&d.SystemCode, &d.SystemName, &d.TenantName, &d.UserDNI, &d.UserEmail, &d.UserName); err != nil {
+			&d.SystemCode, &d.SystemName, &d.TenantName, &d.UserDocumentType, &d.UserDocumentNumber, &d.UserEmail, &d.UserName); err != nil {
 			return nil, fmt.Errorf("scan access: %w", err)
 		}
 		out = append(out, d)
