@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -91,6 +92,14 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var adminTOTP []byte
+	if cfg.AdminTOTPSecret != "" {
+		if adminTOTP, err = platform.ParseTOTPSecret(cfg.AdminTOTPSecret); err != nil {
+			return fmt.Errorf("ADMIN_TOTP_SECRET: %w", err)
+		}
+	} else {
+		log.Warn("ADMIN_TOTP_SECRET is empty: superadmin login does not ask for a 6-digit code (development only)")
+	}
 	sessionRepo := session.NewPostgresRepository(pool)
 	userRepo := user.NewPostgresRepository(pool)
 	accessSvc := access.NewService(access.NewPostgresRepository(pool))
@@ -104,7 +113,7 @@ func run(log *slog.Logger) error {
 		Signer:   signer,
 		Clients:  credentialSvc,
 	}, session.Config{
-		Admin:     session.AdminCredentials{DNI: cfg.AdminUser, PasswordHash: adminHash},
+		Admin:     session.AdminCredentials{DNI: cfg.AdminUser, PasswordHash: adminHash, TOTPSecret: adminTOTP},
 		DummyHash: dummyHash,
 		Limits: session.Limits{
 			MaxPerSubject: cfg.LoginMaxPerSubject, MaxPerIP: cfg.LoginMaxPerIP, Window: cfg.LoginWindow,

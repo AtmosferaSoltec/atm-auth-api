@@ -161,7 +161,8 @@ func TestAdminSessionFlow(t *testing.T) {
 		t.Fatalf("bad login: got %d", rec.Code)
 	}
 
-	rec := call(h, "POST", "/v1/admin/login", "", map[string]string{"dni": "74455518", "password": "a-long-admin-password"})
+	// The console always sends "code"; without a TOTP secret configured it is ignored.
+	rec := call(h, "POST", "/v1/admin/login", "", map[string]string{"dni": "74455518", "password": "a-long-admin-password", "code": "123456"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login: got %d %s", rec.Code, rec.Body)
 	}
@@ -214,6 +215,9 @@ func TestLoginThrottleAndBadBody(t *testing.T) {
 
 	if rec := call(h, "POST", "/v1/admin/login", "", map[string]string{"dni": ""}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty body: got %d", rec.Code)
+	}
+	if rec := call(h, "POST", "/v1/admin/login", "", map[string]string{"dni": "74455518", "password": "x", "code": "12345678901234567"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("oversized code: got %d", rec.Code)
 	}
 	if rec := call(h, "POST", "/v1/refresh", "", map[string]any{"refresh_token": "x", "extra": 1}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("unknown field: got %d", rec.Code)

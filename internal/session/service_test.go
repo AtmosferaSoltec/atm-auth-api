@@ -247,7 +247,7 @@ func TestAdminLogin(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		f := newFixture()
-		tokens, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "1.1.1.1")
+		tokens, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "", "1.1.1.1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -273,7 +273,7 @@ func TestAdminLogin(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture()
-			if _, err := f.svc.AdminLogin(ctx, tc.dni, tc.pw, "1.1.1.1"); !errors.Is(err, ErrInvalidCredentials) {
+			if _, err := f.svc.AdminLogin(ctx, tc.dni, tc.pw, "", "1.1.1.1"); !errors.Is(err, ErrInvalidCredentials) {
 				t.Fatalf("got %v", err)
 			}
 		})
@@ -282,10 +282,10 @@ func TestAdminLogin(t *testing.T) {
 	t.Run("locks after max attempts on the same dni", func(t *testing.T) {
 		f := newFixture()
 		for i := 0; i < 3; i++ {
-			_, _ = f.svc.AdminLogin(ctx, "74455518", "bad", "1.1.1.1")
+			_, _ = f.svc.AdminLogin(ctx, "74455518", "bad", "", "1.1.1.1")
 		}
 		// Even the right password is refused while locked.
-		_, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "2.2.2.2")
+		_, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "", "2.2.2.2")
 		var tm *TooManyAttemptsError
 		if !errors.As(err, &tm) {
 			t.Fatalf("got %v", err)
@@ -295,7 +295,7 @@ func TestAdminLogin(t *testing.T) {
 		}
 
 		*f.now = f.now.Add(15*time.Minute + time.Second)
-		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "2.2.2.2"); err != nil {
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "", "2.2.2.2"); err != nil {
 			t.Fatalf("expected unlock after window, got %v", err)
 		}
 	})
@@ -303,9 +303,9 @@ func TestAdminLogin(t *testing.T) {
 	t.Run("locks per ip across different dnis", func(t *testing.T) {
 		f := newFixture()
 		for i := 0; i < 5; i++ {
-			_, _ = f.svc.AdminLogin(ctx, "dni"+strconv.Itoa(i), "bad", "9.9.9.9")
+			_, _ = f.svc.AdminLogin(ctx, "dni"+strconv.Itoa(i), "bad", "", "9.9.9.9")
 		}
-		_, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "9.9.9.9")
+		_, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "", "9.9.9.9")
 		var tm *TooManyAttemptsError
 		if !errors.As(err, &tm) {
 			t.Fatalf("got %v", err)
@@ -314,9 +314,9 @@ func TestAdminLogin(t *testing.T) {
 
 	t.Run("success clears the dni counter", func(t *testing.T) {
 		f := newFixture()
-		_, _ = f.svc.AdminLogin(ctx, "74455518", "bad", "1.1.1.1")
-		_, _ = f.svc.AdminLogin(ctx, "74455518", "bad", "1.1.1.1")
-		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "1.1.1.1"); err != nil {
+		_, _ = f.svc.AdminLogin(ctx, "74455518", "bad", "", "1.1.1.1")
+		_, _ = f.svc.AdminLogin(ctx, "74455518", "bad", "", "1.1.1.1")
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "", "1.1.1.1"); err != nil {
 			t.Fatal(err)
 		}
 		if n, _, _ := f.attempts.Failures(ctx, "admin:74455518", time.Time{}); n != 0 {
@@ -325,9 +325,82 @@ func TestAdminLogin(t *testing.T) {
 	})
 }
 
+func TestAdminLoginWithTOTP(t *testing.T) {
+	ctx := context.Background()
+	secret := []byte("12345678901234567890")
+	newTOTPFixture := func() *fixture {
+		f := newFixture()
+		f.svc.admin.TOTPSecret = secret
+		return f
+	}
+	codeAt := func(f *fixture, offset time.Duration) string {
+		return platform.TOTPCode(secret, platform.TOTPStep(f.now.Add(offset)))
+	}
+
+	t.Run("accepts the current code", func(t *testing.T) {
+		f := newTOTPFixture()
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", codeAt(f, 0), "1.1.1.1"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("accepts the code of the previous step", func(t *testing.T) {
+		f := newTOTPFixture()
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", codeAt(f, -platform.TOTPPeriod), "1.1.1.1"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	for name, code := range map[string]func(*fixture) string{
+		"missing code": func(*fixture) string { return "" },
+		"wrong code":   func(f *fixture) string { return "000000" },
+		"old code":     func(f *fixture) string { return codeAt(f, -3*platform.TOTPPeriod) },
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			f := newTOTPFixture()
+			if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", code(f), "1.1.1.1"); !errors.Is(err, ErrInvalidCredentials) {
+				t.Fatalf("got %v", err)
+			}
+			if n, _, _ := f.attempts.Failures(ctx, "admin:74455518", time.Time{}); n != 1 {
+				t.Fatalf("a wrong code must count as a failed attempt, got %d", n)
+			}
+		})
+	}
+
+	t.Run("a right code with a wrong password is refused and not consumed", func(t *testing.T) {
+		f := newTOTPFixture()
+		code := codeAt(f, 0)
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "nope", code, "1.1.1.1"); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("got %v", err)
+		}
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", code, "1.1.1.1"); err != nil {
+			t.Fatalf("the code should still be usable: %v", err)
+		}
+	})
+
+	t.Run("a code is accepted only once", func(t *testing.T) {
+		f := newTOTPFixture()
+		code := codeAt(f, 0)
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", code, "1.1.1.1"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", code, "1.1.1.1"); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("replayed code: got %v", err)
+		}
+		// Neither is an older code once a newer one was used.
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", codeAt(f, -platform.TOTPPeriod), "1.1.1.1"); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("older code: got %v", err)
+		}
+		*f.now = f.now.Add(platform.TOTPPeriod)
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", codeAt(f, 0), "1.1.1.1"); err != nil {
+			t.Fatalf("the next code should work: %v", err)
+		}
+	})
+}
+
 func login(t *testing.T, f *fixture) Tokens {
 	t.Helper()
-	tokens, err := f.svc.AdminLogin(context.Background(), "74455518", "right-password", "1.1.1.1")
+	tokens, err := f.svc.AdminLogin(context.Background(), "74455518", "right-password", "", "1.1.1.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +547,7 @@ func TestUserLogin(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			_, _ = f.svc.UserLogin(ctx, "74455518", "bad", "olympus", "", "1.1.1.1")
 		}
-		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "2.2.2.2"); err != nil {
+		if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "", "2.2.2.2"); err != nil {
 			t.Fatalf("admin must not be locked by user attempts: %v", err)
 		}
 	})
@@ -743,7 +816,7 @@ func TestSessionPolicy(t *testing.T) {
 	t.Run("the superadmin is not affected", func(t *testing.T) {
 		f := newFixture()
 		f.svc.temporaryTTL = 2 * time.Hour
-		tokens, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "1.1.1.1")
+		tokens, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "", "1.1.1.1")
 		if err != nil || tokens.SessionMode != "persistent" || tokens.RefreshExpiresIn != 24*3600 {
 			t.Fatalf("got %+v err %v", tokens, err)
 		}
@@ -778,7 +851,7 @@ func TestUserTokenIdentifiesPersonAndCompany(t *testing.T) {
 	}
 
 	// The superadmin and a system's service token say nothing about a person or a company.
-	if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "1.1.1.1"); err != nil {
+	if _, err := f.svc.AdminLogin(ctx, "74455518", "right-password", "", "1.1.1.1"); err != nil {
 		t.Fatal(err)
 	}
 	if c := f.signer.last; c.Name != "" || c.DNI != "" || c.TenantRUC != "" || c.Client != "" {

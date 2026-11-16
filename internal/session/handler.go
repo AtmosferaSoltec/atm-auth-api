@@ -37,9 +37,11 @@ func (h *Handler) RegisterAuthenticated(mux *http.ServeMux, user httpx.Middlewar
 	mux.Handle("GET /v1/session/tenants", user(http.HandlerFunc(h.tenants)))
 }
 
-type loginRequest struct {
+type adminLoginRequest struct {
 	DNI      string `json:"dni"`
 	Password string `json:"password"`
+	// Code is the 6-digit code of the superadmin's authenticator app.
+	Code string `json:"code"`
 }
 
 type userLoginRequest struct {
@@ -152,12 +154,13 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
-	var req loginRequest
-	if err := httpx.DecodeJSON(w, r, &req); err != nil || req.DNI == "" || req.Password == "" || len(req.DNI) > 64 {
+	var req adminLoginRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil || req.DNI == "" || req.Password == "" || len(req.DNI) > 64 ||
+		len(req.Code) > 16 {
 		invalidRequest(w)
 		return
 	}
-	tokens, err := h.svc.AdminLogin(r.Context(), req.DNI, req.Password, httpx.ClientIP(r, h.clientIPHeader))
+	tokens, err := h.svc.AdminLogin(r.Context(), req.DNI, req.Password, req.Code, httpx.ClientIP(r, h.clientIPHeader))
 	h.respondTokens(w, r, tokens, err)
 }
 

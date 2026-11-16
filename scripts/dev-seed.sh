@@ -38,8 +38,9 @@ api() { # api METHOD PATH [JSON_BODY]
   curl "${args[@]}"
 }
 
-TOKEN=$(api POST /v1/admin/login "$(jq -nc --arg d "$ADMIN_USER" --arg p "$ADMIN_PASSWORD" '{dni:$d,password:$p}')" | jq -r '.access_token // empty')
-[ -n "$TOKEN" ] || { echo "Superadmin login failed at $AUTH_URL (is the API running? are ADMIN_USER/ADMIN_PASSWORD in .env right?)" >&2; exit 1; }
+# If the local .env sets ADMIN_TOTP_SECRET, pass the current code: ADMIN_TOTP_CODE=123456 scripts/dev-seed.sh
+TOKEN=$(api POST /v1/admin/login "$(jq -nc --arg d "$ADMIN_USER" --arg p "$ADMIN_PASSWORD" --arg c "${ADMIN_TOTP_CODE:-}" '{dni:$d,password:$p,code:$c}')" | jq -r '.access_token // empty')
+[ -n "$TOKEN" ] || { echo "Superadmin login failed at $AUTH_URL (is the API running? are ADMIN_USER/ADMIN_PASSWORD in .env right? is ADMIN_TOTP_CODE needed?)" >&2; exit 1; }
 
 list() { api GET "$1" | jq -c '(.items // .)'; }
 

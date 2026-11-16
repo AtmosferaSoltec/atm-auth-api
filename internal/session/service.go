@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/AtmosferaSoltec/atm-auth-api/internal/access"
@@ -69,6 +70,10 @@ type Service struct {
 	// temporaryTTL bounds the refresh token of a "temporary" system. Zero means no extra bound.
 	temporaryTTL time.Duration
 	now          func() time.Time
+
+	// lastAdminStep is the TOTP step of the last accepted superadmin code, so a code is never accepted twice.
+	adminMu       sync.Mutex
+	lastAdminStep int64
 }
 
 type Deps struct {
@@ -102,8 +107,11 @@ func NewService(deps Deps, cfg Config, now func() time.Time) *Service {
 	}
 }
 
-// AdminLogin authenticates the superadmin. ip is the client address used for throttling.
-func (s *Service) AdminLogin(ctx context.Context, dni, password, ip string) (Tokens, error) {
+// AdminLogin authenticates the superadmin. code is the 6-digit code of the authenticator app (ignored when no TOTP
+// secret is configured). ip is the client address used for throttling.
+// A wrong password, user or code all answer ErrInvalidCredentials and count as a failed attempt, so the response
+// never reveals which of them was wrong.
+func (s *Service) AdminLogin(ctx context.Context, dni, password, code, ip string) (Tokens, error) {
 	subjectKey, ipKey := "admin:"+dni, "ip:"+ip
 	if err := s.checkLimits(ctx, subjectKey, ipKey); err != nil {
 		return Tokens{}, err
@@ -115,7 +123,7 @@ func (s *Service) AdminLogin(ctx context.Context, dni, password, ip string) (Tok
 		return Tokens{}, fmt.Errorf("admin login: %w", err)
 	}
 	dniMatch := subtle.ConstantTimeCompare([]byte(dni), []byte(s.admin.DNI)) == 1
-	if !ok || !dniMatch {
+	if !ok || !dniMatch || !s.acceptAdminCode(code, ok && dniMatch) {
 		if err := s.recordFailure(ctx, subjectKey, ipKey); err != nil {
 			return Tokens{}, err
 		}
@@ -130,6 +138,25 @@ func (s *Service) AdminLogin(ctx context.Context, dni, password, ip string) (Tok
 		return Tokens{}, fmt.Errorf("admin login: %w", err)
 	}
 	return tokens, nil
+}
+
+// acceptAdminCode checks the superadmin's TOTP code. The code is always computed, so timing does not reveal
+// whether the password was right; it is consumed (never accepted again) only when the rest of the login is valid.
+func (s *Service) acceptAdminCode(code string, credentialsOK bool) bool {
+	if s.admin.TOTPSecret == nil {
+		return true
+	}
+	step, ok := platform.VerifyTOTP(s.admin.TOTPSecret, code, s.now())
+	if !ok || !credentialsOK {
+		return false
+	}
+	s.adminMu.Lock()
+	defer s.adminMu.Unlock()
+	if step <= s.lastAdminStep {
+		return false
+	}
+	s.lastAdminStep = step
+	return true
 }
 
 // UserLogin authenticates a user by the number of their identity document (DNI, CE or passport) for one system and resolves the tenant and role they have there.

@@ -14,6 +14,7 @@ Environment variables (see `.env.example`):
 | `MESSAGING_URL` | empty | Base URL of atm-messaging-api. Empty: recovery requests are accepted but no email is sent |
 | `GOOGLE_CLIENT_IDS` | empty | Comma separated OAuth client IDs (web, Android, iOS). Empty: Google sign-in is off |
 | `ACCOUNT_DELETION_HOOKS` | empty | `code=https://url` pairs: where each personal system deletes its data of a person who deletes their account |
+| `ADMIN_TOTP_SECRET` | empty | Base32 key of the superadmin's authenticator app (`go run ./cmd/totpsetup`). Required in production; empty in development turns the 6-digit code off |
 | `CORS_ALLOWED_ORIGINS` | empty | Browser origins (comma separated) allowed to call the API directly, e.g. each system's web. Tokens travel in the `Authorization` header, so credentials/cookies are never allowed |
 
 ## Local development
@@ -36,6 +37,8 @@ Set the superadmin in `.env` (`ADMIN_USER` and `ADMIN_PASSWORD`, at least 12 cha
 ```
 go run ./cmd/genkey     # -> JWT_PRIVATE_KEY
 ```
+
+Locally `ADMIN_TOTP_SECRET` can stay empty; set it to try the 6-digit code (see "Superadmin second factor").
 
 ## Run
 
@@ -85,7 +88,7 @@ A system that keeps its own company record links it by RUC the first time someon
 | POST | `/v1/google` | Body: `{"system", "credential", "nonce", "password"?, "tenant_id"?}`. `credential` is the Google ID token the app got with its own SDK (web, Android, iOS client IDs are all accepted). Signs in the linked account; or links the account that has that email if `password` confirms it (`409 password_required_to_link` asks for it, without burning the nonce); or creates a passwordless account in a system that accepts sign-up (`403 signup_closed` otherwise). Returns the same tokens as login |
 | DELETE | `/v1/account` | Needs a user token. Body: `{"password"}` or, for accounts without one, `{"credential", "nonce"}` of the linked Google identity. Only for people whose accesses are all in personal systems (`409 account_shared` otherwise). Calls each system's `ACCOUNT_DELETION_HOOKS` URL first (POST `{user_id, system}` with a service token of subject `system:auth`); if one fails, nothing is deleted (`502 account_cleanup_failed`) |
 | POST | `/v1/token` | Service token for a system's backend. Body: `{"client_id": <system code>, "client_secret"}`. Returns a short-lived `access_token` (role `service`, subject `system:<code>`) with no refresh token; the backend asks again when it expires. One secret per system works on every microservice, which only verify the token with the JWKS. Throttled like logins |
-| POST | `/v1/admin/login` | Superadmin login. Body: `{"dni", "password"}` |
+| POST | `/v1/admin/login` | Superadmin login. Body: `{"dni", "password", "code"}`. `code` is the 6-digit code of the authenticator app, required when `ADMIN_TOTP_SECRET` is set. A wrong user, password or code all answer `401 invalid_credentials` and count as a failed attempt; a code is accepted only once |
 | POST | `/v1/password/change` | Body: `{"document", "current_password", "new_password"}` (`dni` still accepted). Ends all sessions; the user logs in again |
 | POST | `/v1/refresh` | Rotate a refresh token. Body: `{"refresh_token"}`, plus an optional `tenant_id` to **switch the session to another company** the person works for in the system (no password needed; `403 no_access` if they do not, and their session stays). That company becomes the one login enters next time |
 | GET | `/v1/session/tenants` | The companies the signed-in person can work for in the system of their token: `{items: [{tenant_id, ruc, name, role, current}]}`. Clients show a selector when there is more than one |
@@ -190,3 +193,14 @@ docker run --rm ghcr.io/atmosferasoltec/atm-auth-api:latest /app/genkey      # J
 ```
 
 Replacing `JWT_PRIVATE_KEY` ends every open session.
+
+### Superadmin second factor
+
+The superadmin login also asks for a 6-digit code that changes every 30 seconds (TOTP, RFC 6238: SHA1, 6 digits, 30 s; any authenticator app works, such as Apple Passwords or Google Authenticator). There is no external service: the server and the app share a secret and both derive the code from the time, so the server clock must be right (codes from 30 s before or after are accepted). The service does not start in production without `ADMIN_TOTP_SECRET`.
+
+1. Generate the secret on the server, never in a shared place: `docker run --rm ghcr.io/atmosferasoltec/atm-auth-api:latest /app/totpsetup`.
+2. Add it to the app. In Apple Passwords: open the console's entry, Edit, Set Up Verification Code, Enter Setup Key, and paste the setup key.
+3. Check it: `docker run --rm ghcr.io/atmosferasoltec/atm-auth-api:latest /app/totpsetup -check <secret> <code the app shows>`.
+4. Put `ADMIN_TOTP_SECRET=<secret>` in `/opt/auth-api/.env` and restart the container. Sessions already open stay open until they expire or log out.
+
+To replace it (a lost phone, or a secret that may have leaked), repeat the steps: the old code stops working on restart. Whoever can read the server `.env` has both the password and the secret, so keep that file private.

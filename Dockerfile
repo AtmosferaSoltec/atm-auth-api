@@ -8,16 +8,17 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-# genkey ships in the image so the signing key can be produced on the server without a
-# Go toolchain (docker run --rm <image> /app/genkey).
+# genkey and totpsetup ship in the image so the signing key and the superadmin's 6-digit code secret can be
+# produced on the server without a Go toolchain (docker run --rm <image> /app/genkey, /app/totpsetup).
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/auth-api ./cmd/api \
-    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/genkey ./cmd/genkey
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/genkey ./cmd/genkey \
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/totpsetup ./cmd/totpsetup
 
 FROM alpine:3.22 AS runner
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S app && adduser -S -G app app
 WORKDIR /app
-COPY --from=builder /out/auth-api /out/genkey /app/
+COPY --from=builder /out/auth-api /out/genkey /out/totpsetup /app/
 USER app
 ENV HTTP_ADDR=:8080 APP_ENV=production
 EXPOSE 8080

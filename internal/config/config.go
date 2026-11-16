@@ -29,6 +29,9 @@ type Config struct {
 	// only the hash is kept in memory.
 	AdminUser     string
 	AdminPassword string
+	// AdminTOTPSecret is the base32 key of the superadmin's authenticator app (ADMIN_TOTP_SECRET). Required in
+	// production; empty in development turns the 6-digit code off. Generate it with cmd/totpsetup.
+	AdminTOTPSecret string
 
 	JWTPrivateKey string
 	JWTIssuer     string
@@ -74,8 +77,9 @@ func Load() (Config, error) {
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		Argon2:      Argon2FromEnv(),
 
-		AdminUser:     os.Getenv("ADMIN_USER"),
-		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
+		AdminUser:       os.Getenv("ADMIN_USER"),
+		AdminPassword:   os.Getenv("ADMIN_PASSWORD"),
+		AdminTOTPSecret: os.Getenv("ADMIN_TOTP_SECRET"),
 
 		JWTPrivateKey:       os.Getenv("JWT_PRIVATE_KEY"),
 		JWTIssuer:           getenv("JWT_ISSUER", "atm-auth-api"),
@@ -106,6 +110,9 @@ func Load() (Config, error) {
 	}
 	if cfg.Env != "development" && cfg.Env != "production" {
 		return Config{}, fmt.Errorf("load config: invalid APP_ENV %q", cfg.Env)
+	}
+	if cfg.AdminTOTPSecret == "" && cfg.Env == "production" {
+		return Config{}, errors.New("load config: ADMIN_TOTP_SECRET is required in production")
 	}
 	hooks, err := parseHooks(os.Getenv("ACCOUNT_DELETION_HOOKS"))
 	if err != nil {

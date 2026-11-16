@@ -64,6 +64,23 @@ func TestLoad(t *testing.T) {
 			t.Fatalf("12 characters must be accepted: %v", err)
 		}
 	})
+	t.Run("admin totp secret", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("ADMIN_TOTP_SECRET", "")
+		t.Setenv("APP_ENV", "development")
+		if _, err := Load(); err != nil {
+			t.Fatalf("development may run without the second factor: %v", err)
+		}
+		t.Setenv("APP_ENV", "production")
+		if _, err := Load(); err == nil {
+			t.Fatal("production must refuse to start without ADMIN_TOTP_SECRET")
+		}
+		t.Setenv("ADMIN_TOTP_SECRET", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+		cfg, err := Load()
+		if err != nil || cfg.AdminTOTPSecret != "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" {
+			t.Fatalf("got %q %v", cfg.AdminTOTPSecret, err)
+		}
+	})
 	t.Run("custom durations", func(t *testing.T) {
 		setRequired(t)
 		t.Setenv("ACCESS_TOKEN_TTL", "5m")

@@ -50,4 +50,7 @@ type Limits struct {
 type AdminCredentials struct {
 	DNI          string
 	PasswordHash string
+	// TOTPSecret is the key of the superadmin's authenticator app. When set, login also asks for its 6-digit
+	// code. Nil turns the second factor off (allowed only in development).
+	TOTPSecret []byte
 }
